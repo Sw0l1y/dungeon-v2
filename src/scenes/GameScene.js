@@ -11,20 +11,10 @@ export class GameScene extends Scene {
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
 
-    this._canvasMouse = { x: 0, y: 0 };
-    this._onMouseMove = (e) => {
-      const rect = this.game.canvas.getBoundingClientRect();
-      const sx = this.game.canvas.width  / rect.width;
-      const sy = this.game.canvas.height / rect.height;
-      this._canvasMouse.x = (e.clientX - rect.left) * sx;
-      this._canvasMouse.y = (e.clientY - rect.top)  * sy;
-    };
-    this.game.canvas.addEventListener('mousemove', this._onMouseMove);
   }
 
   onExit() {
     this.level.onExit();
-    this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
   }
 
   update(dt) {
@@ -34,11 +24,6 @@ export class GameScene extends Scene {
     if (this.game.input.justPressed('KeyV') && !this.waves.active) {
       this.waves.startWave();
     }
-
-    // Update world-space mouse position for archer aiming
-    this.level.mouseWorld = this.camera.screenToWorld(
-      this._canvasMouse.x, this._canvasMouse.y
-    );
 
     const ps = this.level.players;
     if (ps.length > 0 && ps.every(p => !p.alive)) {

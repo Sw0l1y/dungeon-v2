@@ -11,7 +11,7 @@ const CLASSES = [
   {
     id:   'archer',
     name: 'Archer',
-    lines: ['Fast projectile', 'Mouse aimed'],
+    lines: ['Fast projectile', 'Auto-aims nearest enemy'],
     key:  'Q  /  U',
   },
   {
