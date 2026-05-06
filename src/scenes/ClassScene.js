@@ -11,14 +11,20 @@ const CLASSES = [
   {
     id:   'archer',
     name: 'Archer',
-    lines: ['Fast projectile', 'Low damage, long range'],
+    lines: ['Fast projectile', 'Mouse aimed'],
+    key:  'Q  /  U',
+  },
+  {
+    id:   'rogue',
+    name: 'Rogue',
+    lines: ['Dash through enemies', 'Invincible during dash'],
     key:  'Q  /  U',
   },
 ];
 
-const CARD_W = 180;
-const CARD_H = 200;
-const CARD_GAP = 30;
+const CARD_W   = 180;
+const CARD_H   = 200;
+const CARD_GAP = 20;
 
 export class ClassScene extends Scene {
 
@@ -54,13 +60,16 @@ export class ClassScene extends Scene {
   // ── layout ─────────────────────────────────────────────────────────────────
 
   _classCard(playerIdx, classIdx) {
-    const W         = this.game.canvas.width;
-    const n         = this.game.state.players.length;
-    const sectionW  = n === 1 ? W : W / 2;
+    const W        = this.game.canvas.width;
+    const n        = this.game.state.players.length;
+    const sectionW = n === 1 ? W : W / 2;
     const sectionCX = playerIdx * sectionW + sectionW / 2;
-    const totalW    = CARD_W * 2 + CARD_GAP;
-    const startX    = sectionCX - totalW / 2;
-    return { x: startX + classIdx * (CARD_W + CARD_GAP), y: 190, w: CARD_W, h: CARD_H };
+    const nc  = CLASSES.length;
+    // Shrink cards to fit section with 40px side padding; cap at CARD_W
+    const cw  = Math.min(CARD_W, Math.floor((sectionW - 40 - CARD_GAP * (nc - 1)) / nc));
+    const totalW = cw * nc + CARD_GAP * (nc - 1);
+    const startX = sectionCX - totalW / 2;
+    return { x: startX + classIdx * (cw + CARD_GAP), y: 190, w: cw, h: CARD_H };
   }
 
   _startBtn() {

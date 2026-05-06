@@ -20,6 +20,13 @@ export class Player {
     this._facingY    = 1;
     this._atkCooldown = 0;
     this._iframes     = 0;
+    // Rogue
+    this._dashing   = false;
+    this._dashTimer = 0;
+    this._dashDirX  = 0;
+    this._dashDirY  = 0;
+    this._dashHit   = new Set();
+    this._dashTrail = [];
   }
 
   takeDamage(amount) {
@@ -56,6 +63,36 @@ export class Player {
 
     this._iframes     = Math.max(0, this._iframes - dt);
     this._atkCooldown = Math.max(0, this._atkCooldown - dt);
+
+    // Rogue dash movement & hit detection
+    if (this._dashing) {
+      const dashSpeed = 1400;
+      const nx = this.x + this._dashDirX * dashSpeed * dt;
+      const ny = this.y + this._dashDirY * dashSpeed * dt;
+      if (!this._collidesAt(nx, this.y)) this.x = nx; else this._dashTimer = 0;
+      if (!this._collidesAt(this.x, ny)) this.y = ny; else this._dashTimer = 0;
+
+      this._dashTrail.push({ x: this.x, y: this.y, a: 0.55 });
+
+      for (const e of [...this.level.entities]) {
+        if (!e.isEnemy || !e.alive || this._dashHit.has(e)) continue;
+        if (Math.hypot(e.x - this.x, e.y - this.y) < this.radius + e.radius + 2) {
+          e.die();
+          this._dashHit.add(e);
+        }
+      }
+
+      this._dashTimer -= dt;
+      if (this._dashTimer <= 0) {
+        this._dashing = false;
+        this._dashHit.clear();
+      }
+    }
+
+    // Fade trail
+    for (const t of this._dashTrail) t.a -= dt * 6;
+    this._dashTrail = this._dashTrail.filter(t => t.a > 0);
+
     if (this.binding.justPressed('actionA') && this._atkCooldown === 0) {
       this._attack();
     }
@@ -67,6 +104,14 @@ export class Player {
       this.level.addEntity(
         new SwordSwing(this.level, this.x, this.y, this._facingX, this._facingY, this)
       );
+    } else if (this.classId === 'rogue') {
+      if (this._dashing) return;
+      this._atkCooldown = 0.75;
+      this._dashing     = true;
+      this._dashTimer   = 0.13;
+      this._dashDirX    = this._facingX;
+      this._dashDirY    = this._facingY;
+      this._iframes     = 0.18; // invincible through the full dash + tiny buffer
     } else if (this.classId === 'archer') {
       this._atkCooldown = 0.3;
       const speed = 420;
@@ -104,10 +149,21 @@ export class Player {
   }
 
   draw(ctx) {
+    // Rogue dash trail
+    for (const t of this._dashTrail) {
+      ctx.save();
+      ctx.globalAlpha = t.a;
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, this.radius * 0.65, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+
     ctx.save();
 
-    // Damage flash: blink body during iframes
-    if (this._iframes > 0) {
+    // Damage flash: blink body during iframes (skip during rogue dash — trail sells it)
+    if (this._iframes > 0 && !this._dashing) {
       ctx.globalAlpha = Math.floor(this._iframes / 0.1) % 2 === 0 ? 0.35 : 1;
     }
 
