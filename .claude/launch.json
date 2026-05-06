@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dungeon-v2",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["serve", "-p", "5200", "."],
+      "port": 5200
+    }
+  ]
+}

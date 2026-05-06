@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dungeon V2</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        min-height: 100%;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        background:
+          radial-gradient(circle at 20% 15%, rgba(91, 195, 255, 0.12), transparent 30%),
+          radial-gradient(circle at 80% 85%, rgba(180, 80, 255, 0.10), transparent 32%),
+          linear-gradient(180deg, #07111c, #0b1730 58%, #08111f);
+        font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+      }
+      .shell {
+        width: min(100vw, 1120px);
+        padding: 18px;
+      }
+      canvas {
+        display: block;
+        width: 100%;
+        height: auto;
+        aspect-ratio: 16 / 9;
+        border: 2px solid rgba(140, 243, 255, 0.22);
+        border-radius: 18px;
+        box-shadow:
+          0 24px 84px rgba(0, 0, 0, 0.52),
+          0 0 42px rgba(91, 195, 255, 0.10);
+        background: #0a0e1a;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <canvas id="canvas"></canvas>
+    </div>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
