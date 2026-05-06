@@ -99,7 +99,8 @@ export class ClassScene extends Scene {
     this.game.state.players.forEach((_, pIdx) => {
       CLASSES.forEach((cls, cIdx) => {
         if (this._hit(this._classCard(pIdx, cIdx), pt)) {
-          this._selections[pIdx] = cls.id;
+          const takenByOther = this._selections.some((s, i) => i !== pIdx && s === cls.id);
+          if (!takenByOther) this._selections[pIdx] = cls.id;
         }
       });
     });
@@ -165,8 +166,9 @@ export class ClassScene extends Scene {
       CLASSES.forEach((cls, cIdx) => {
         const card     = this._classCard(pIdx, cIdx);
         const selected = this._selections[pIdx] === cls.id;
-        const hovered  = this._hit(card, this._mouse);
-        this._drawClassCard(ctx, card, cls, p.color, selected, hovered);
+        const locked   = this._selections.some((s, i) => i !== pIdx && s === cls.id);
+        const hovered  = !locked && this._hit(card, this._mouse);
+        this._drawClassCard(ctx, card, cls, p.color, selected, hovered, locked);
       });
     });
 
@@ -195,16 +197,23 @@ export class ClassScene extends Scene {
     ctx.fillText(canStart ? 'Click START or press Enter' : 'All players must select a class', W / 2, H - 16);
   }
 
-  _drawClassCard(ctx, card, cls, playerColor, selected, hovered) {
+  _drawClassCard(ctx, card, cls, playerColor, selected, hovered, locked = false) {
     const { x, y, w, h } = card;
 
-    ctx.fillStyle = selected
-      ? 'rgba(140,243,255,0.13)'
-      : hovered ? 'rgba(140,243,255,0.07)' : 'rgba(255,255,255,0.04)';
+    ctx.fillStyle = locked
+      ? 'rgba(255,255,255,0.02)'
+      : selected ? 'rgba(140,243,255,0.13)'
+      : hovered  ? 'rgba(140,243,255,0.07)' : 'rgba(255,255,255,0.04)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = selected ? playerColor : hovered ? 'rgba(140,243,255,0.4)' : 'rgba(255,255,255,0.1)';
-    ctx.lineWidth = selected || hovered ? 2 : 1;
+
+    ctx.strokeStyle = locked
+      ? 'rgba(255,255,255,0.06)'
+      : selected ? playerColor : hovered ? 'rgba(140,243,255,0.4)' : 'rgba(255,255,255,0.1)';
+    ctx.lineWidth = (!locked && (selected || hovered)) ? 2 : 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
+
+    ctx.save();
+    if (locked) ctx.globalAlpha = 0.25;
 
     // Class name
     ctx.fillStyle = selected ? playerColor : hovered ? '#fff' : 'rgba(255,255,255,0.7)';
@@ -226,5 +235,15 @@ export class ClassScene extends Scene {
     ctx.fillStyle = selected ? playerColor : 'rgba(255,255,255,0.5)';
     ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
     ctx.fillText(cls.key, x + w / 2, y + h - 20);
+
+    ctx.restore();
+
+    // Locked overlay
+    if (locked) {
+      ctx.fillStyle = 'rgba(255,80,80,0.65)';
+      ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('TAKEN', x + w / 2, y + h / 2);
+    }
   }
 }
