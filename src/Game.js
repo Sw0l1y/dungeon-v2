@@ -4,6 +4,8 @@ import { InputBinding } from './systems/InputBinding.js';
 import { BINDINGS } from './systems/bindings.js';
 import { TitleScene } from './scenes/TitleScene.js';
 
+export const VERSION = 'v0.1';
+
 export class Game {
   constructor(canvas) {
     this.canvas = canvas;
@@ -34,12 +36,23 @@ export class Game {
     this.input.destroy();
   }
 
+  _drawVersion(ctx) {
+    ctx.save();
+    ctx.font = '11px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = 'rgba(255,255,255,0.22)';
+    ctx.fillText(VERSION, 10, this.canvas.height - 8);
+    ctx.restore();
+  }
+
   _loop(timestamp) {
     const dt = Math.min((timestamp - this._lastTime) / 1000, 0.05); // cap at 50ms
     this._lastTime = timestamp;
 
     this.scenes.update(dt);
     this.scenes.draw(this.ctx);
+    this._drawVersion(this.ctx);
     this.input.flush();
 
     this._rafId = requestAnimationFrame(this._loop.bind(this));
