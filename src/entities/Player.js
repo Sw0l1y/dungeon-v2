@@ -33,7 +33,14 @@ export class Player {
     if (!this.alive) return;
     const { x: ax, y: ay } = this.binding.axes;
 
-    if (ax !== 0 || ay !== 0) {
+    if (this.classId === 'archer' && this.level.mouseWorld) {
+      // Archer always faces the mouse cursor
+      const mdx = this.level.mouseWorld.x - this.x;
+      const mdy = this.level.mouseWorld.y - this.y;
+      const mlen = Math.hypot(mdx, mdy) || 1;
+      this._facingX = mdx / mlen;
+      this._facingY = mdy / mlen;
+    } else if (ax !== 0 || ay !== 0) {
       this._facingX = ax;
       this._facingY = ay;
     }
@@ -63,9 +70,17 @@ export class Player {
     } else if (this.classId === 'archer') {
       this._atkCooldown = 0.3;
       const speed = 420;
-      const len   = Math.hypot(this._facingX, this._facingY) || 1;
+      // Prefer precise mouse direction; fall back to facing
+      let dirX = this._facingX, dirY = this._facingY;
+      if (this.level.mouseWorld) {
+        const mdx = this.level.mouseWorld.x - this.x;
+        const mdy = this.level.mouseWorld.y - this.y;
+        const mlen = Math.hypot(mdx, mdy) || 1;
+        dirX = mdx / mlen;
+        dirY = mdy / mlen;
+      }
       this.level.addEntity(
-        new Projectile(this.level, this.x, this.y, (this._facingX / len) * speed, (this._facingY / len) * speed, this)
+        new Projectile(this.level, this.x, this.y, dirX * speed, dirY * speed, this)
       );
     }
   }
