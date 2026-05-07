@@ -91,6 +91,7 @@ export class Boss {
 
   die() {
     this.alive = false;
+    this.level.spawnDeathParticles(this.x, this.y, '#cc2200', 40);
     this.level.removeEntity(this);
     const stats = this.level.game?.state?.stats;
     if (stats) stats.enemiesKilled++;

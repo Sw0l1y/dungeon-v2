@@ -101,6 +101,27 @@ export class Portal {
       if (!pl._collidesAt(nx, pl.y)) pl.x = nx;
       if (!pl._collidesAt(pl.x, ny)) pl.y = ny;
     }
+
+    // ── Soul fragment gravity (enemy death particles) ────────────────────────
+    for (const d of this.level._soulDebris) {
+      const dx   = this.x - d.x;
+      const dy   = this.y - d.y;
+      const dist = Math.hypot(dx, dy) || 1;
+
+      // Absorb when reaching the void
+      if (dist < PORTAL_RADIUS * 0.45) { d.life = 0; continue; }
+
+      // Radial acceleration — strong at all distances (no gate), peaks near centre
+      const accel = (700 / (dist + 70) + 5500 / (dist * dist + 250)) * dt;
+      d.vx += (dx / dist) * accel;
+      d.vy += (dy / dist) * accel;
+
+      // Tangential (clockwise swirl, same direction as ambient particles)
+      const tx = dy / dist, ty = -dx / dist;
+      const tAccel = SWIRL_STRENGTH * 1.4 * (550 / (dist + 110)) * dt;
+      d.vx += tx * tAccel;
+      d.vy += ty * tAccel;
+    }
   }
 
   // ── Draw ───────────────────────────────────────────────────────────────────

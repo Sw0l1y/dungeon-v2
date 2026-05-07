@@ -31,6 +31,7 @@ export class Ranger {
 
   die() {
     this.alive = false;
+    this.level.spawnDeathParticles(this.x, this.y, '#ff8c00', 10);
     this.level.removeEntity(this);
     const stats = this.level.game?.state?.stats;
     if (stats) stats.enemiesKilled++;

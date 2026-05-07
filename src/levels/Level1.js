@@ -81,6 +81,7 @@ export class Level1 extends Level {
     }
 
     this._drawDebris(ctx);
+    this._drawSoulDebris(ctx);
     super.draw(ctx);
   }
 }

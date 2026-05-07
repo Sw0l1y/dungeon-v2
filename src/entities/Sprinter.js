@@ -28,6 +28,7 @@ export class Sprinter {
 
   die() {
     this.alive = false;
+    this.level.spawnDeathParticles(this.x, this.y, '#ffe033', 8);
     this.level.removeEntity(this);
     const stats = this.level.game?.state?.stats;
     if (stats) stats.enemiesKilled++;
