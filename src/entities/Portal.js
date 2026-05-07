@@ -67,13 +67,13 @@ export class Portal {
       const dy = this.y - p.y;
       const dist = Math.hypot(dx, dy) || 1;
 
-      // Radial pull — accelerates sharply when close
-      const radialSpeed = p.speed * (500 / (dist + 80) + 2200 / (dist * dist + 300)) * dt;
+      // Radial pull — strong across the whole map so particles stream in quickly
+      const radialSpeed = (28000 / (dist + 80) + 8000 / (dist * dist + 300)) * dt;
 
       // Tangential nudge — creates the spiral swirl (clockwise)
       // Perpendicular to (dx, dy): rotate 90° CW → (dy, -dx) normalised
       const tx = dy / dist, ty = -dx / dist;
-      const tangentialSpeed = p.speed * SWIRL_STRENGTH * (600 / (dist + 120)) * dt;
+      const tangentialSpeed = SWIRL_STRENGTH * (5500 / (dist + 120)) * dt;
 
       p.x += (dx / dist) * radialSpeed + tx * tangentialSpeed;
       p.y += (dy / dist) * radialSpeed + ty * tangentialSpeed;
@@ -111,16 +111,12 @@ export class Portal {
       // Absorb when reaching the void
       if (dist < PORTAL_RADIUS * 0.45) { d.life = 0; continue; }
 
-      // Radial acceleration — strong at all distances (no gate), peaks near centre
-      const accel = (700 / (dist + 70) + 5500 / (dist * dist + 250)) * dt;
-      d.vx += (dx / dist) * accel;
-      d.vy += (dy / dist) * accel;
-
-      // Tangential (clockwise swirl, same direction as ambient particles)
+      // Position-based pull (like ambient particles — effective at all distances)
+      const radialMove = (24000 / (dist + 80) + 8000 / (dist * dist + 300)) * dt;
       const tx = dy / dist, ty = -dx / dist;
-      const tAccel = SWIRL_STRENGTH * 1.4 * (550 / (dist + 110)) * dt;
-      d.vx += tx * tAccel;
-      d.vy += ty * tAccel;
+      const tangentialMove = SWIRL_STRENGTH * 1.4 * (4500 / (dist + 110)) * dt;
+      d.x += (dx / dist) * radialMove + tx * tangentialMove;
+      d.y += (dy / dist) * radialMove + ty * tangentialMove;
     }
   }
 
@@ -166,17 +162,7 @@ export class Portal {
     ctx.globalAlpha = 1;
     ctx.restore();
 
-    // ── 2. Outer atmospheric haze ────────────────────────────────────────────
-    const haze = ctx.createRadialGradient(x, y, R * 0.6, x, y, R * 3.8);
-    haze.addColorStop(0,    'rgba(90,40,200,0.24)');
-    haze.addColorStop(0.35, 'rgba(70,25,160,0.12)');
-    haze.addColorStop(1,    'rgba(30,5,80,0)');
-    ctx.fillStyle = haze;
-    ctx.beginPath();
-    ctx.arc(x, y, R * 3.8, 0, Math.PI * 2);
-    ctx.fill();
-
-    // ── 3. Rotating outer galaxy arms ────────────────────────────────────────
+    // ── 2. Rotating outer galaxy arms ────────────────────────────────────────
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(this._armAngle);
@@ -206,7 +192,7 @@ export class Portal {
     ctx.setLineDash([]);
     ctx.restore();
 
-    // ── 4. Counter-rotating inner arms (cyan tint) ───────────────────────────
+    // ── 3. Counter-rotating inner arms (cyan tint) ───────────────────────────
     ctx.save();
     ctx.translate(x, y);
     ctx.rotate(this._innerAngle);
@@ -225,41 +211,21 @@ export class Portal {
     }
     ctx.restore();
 
-    // ── 5. Outer pulsing glow ring ───────────────────────────────────────────
-    const ringPulse = 0.38 + 0.18 * Math.sin(t / 280);
-    ctx.strokeStyle = `rgba(160,100,255,${ringPulse})`;
-    ctx.lineWidth   = 10;
-    ctx.beginPath();
-    ctx.arc(x, y, R + 8, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // ── 6. Main portal rim ───────────────────────────────────────────────────
-    ctx.strokeStyle = `rgba(200,160,255,0.88)`;
-    ctx.lineWidth   = 2.5;
-    ctx.beginPath();
-    ctx.arc(x, y, R, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // Cyan shimmer rim (slightly inside)
-    const shimmer = 0.18 + 0.12 * Math.sin(t / 210);
-    ctx.strokeStyle = `rgba(140,243,255,${shimmer})`;
-    ctx.lineWidth   = 1.5;
-    ctx.beginPath();
-    ctx.arc(x, y, R * 0.84, 0, Math.PI * 2);
-    ctx.stroke();
-
-    // ── 7. Dark void centre ───────────────────────────────────────────────────
-    const void_ = ctx.createRadialGradient(x, y, 0, x, y, R);
-    void_.addColorStop(0,    'rgba(0,0,0,0.98)');
-    void_.addColorStop(0.5,  'rgba(4,0,18,0.94)');
-    void_.addColorStop(0.78, 'rgba(18,4,45,0.72)');
-    void_.addColorStop(1,    'rgba(40,10,80,0)');
-    ctx.fillStyle = void_;
+    // ── 4. Solid void circle ─────────────────────────────────────────────────
+    ctx.fillStyle = '#020008';
     ctx.beginPath();
     ctx.arc(x, y, R, 0, Math.PI * 2);
     ctx.fill();
 
-    // ── 8. Star field inside the void (slowly rotates) ───────────────────────
+    // Crisp rim — single thin pulse ring
+    const rimPulse = 0.7 + 0.25 * Math.sin(t / 280);
+    ctx.strokeStyle = `rgba(180,120,255,${rimPulse})`;
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // ── 5. Star field inside the void (slowly rotates) ───────────────────────
     ctx.save();
     ctx.beginPath();
     ctx.arc(x, y, R * 0.88, 0, Math.PI * 2);
@@ -279,7 +245,7 @@ export class Portal {
     }
     ctx.restore();
 
-    // ── 9. Pulsing bright core ────────────────────────────────────────────────
+    // ── 6. Pulsing bright core ────────────────────────────────────────────────
     const corePulse = 0.5 + 0.38 * Math.sin(t / 175);
     const core      = ctx.createRadialGradient(x, y, 0, x, y, 16);
     core.addColorStop(0,   `rgba(255,245,255,${corePulse})`);
@@ -290,7 +256,7 @@ export class Portal {
     ctx.arc(x, y, 16, 0, Math.PI * 2);
     ctx.fill();
 
-    // ── 10. Proximity prompt ──────────────────────────────────────────────────
+    // ── 7. Proximity prompt ──────────────────────────────────────────────────
     const nearPlayer = this.level.players.some(
       p => p.alive && Math.hypot(p.x - x, p.y - y) < 150
     );
