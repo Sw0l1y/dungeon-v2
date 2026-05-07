@@ -32,7 +32,8 @@ export class GameScene extends Scene {
     this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
 
     // Intro ambient particles (stream toward the opening portal)
-    this._introParticles = [];
+    this._introParticles     = [];
+    this._introParticleShrink = 0;  // > 0 = shrinking out after portal closes
     this._initIntroParticles();
 
     // Players start invisible (grow in with the portal)
@@ -65,6 +66,11 @@ export class GameScene extends Scene {
     }
 
     // ── Normal gameplay ───────────────────────────────────────────────────────
+    // Tick down intro particle shrink-out even after portal is gone
+    if (this._introParticleShrink > 0 || this._introParticles.length > 0) {
+      this._updateIntroParticles(dt);
+    }
+
     this.level.update(dt);
     this.waves.update(dt);
 
@@ -136,7 +142,7 @@ export class GameScene extends Scene {
         this._introPhase = 'done';
         this._introR = 0;
         for (const pl of this.level.players) pl.spawnScale = 1;
-        this._introParticles = [];
+        this._introParticleShrink = 0.001;  // kick off shrink (> 0 activates it)
         this.waves.startWave();   // first wave starts the moment portal seals
       }
     }
@@ -171,6 +177,31 @@ export class GameScene extends Scene {
   }
 
   _updateIntroParticles(dt) {
+    const SHRINK_DUR = 0.65;
+
+    // Shrink-out phase: particles drift but aren't replaced; cleared when done
+    if (this._introParticleShrink > 0) {
+      this._introParticleShrink += dt;
+      if (this._introParticleShrink >= SHRINK_DUR) {
+        this._introParticles     = [];
+        this._introParticleShrink = 0;
+        return;
+      }
+      // Keep drifting toward where the portal was
+      const cx = this._introCX, cy = this._introCY;
+      const SWIRL = 0.42;
+      for (const p of this._introParticles) {
+        const dx = cx - p.x, dy = cy - p.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const radial = (28000 / (dist + 80)) * dt;
+        const tx = dy / dist, ty = -dx / dist;
+        p.x += (dx / dist) * radial + tx * SWIRL * (5500 / (dist + 120)) * dt;
+        p.y += (dy / dist) * radial + ty * SWIRL * (5500 / (dist + 120)) * dt;
+      }
+      return;
+    }
+
+    // Normal phase: pull toward portal + respawn when absorbed
     const cx = this._introCX, cy = this._introCY;
     const R  = this._introR;
     const SWIRL = 0.42;
@@ -192,6 +223,11 @@ export class GameScene extends Scene {
   }
 
   _drawIntroParticles(ctx) {
+    const SHRINK_DUR = 0.65;
+    const shrink = this._introParticleShrink > 0
+      ? Math.max(0, 1 - this._introParticleShrink / SHRINK_DUR)
+      : 1;
+
     const R = this._introR;
     ctx.save();
     ctx.lineCap = 'round';
@@ -199,15 +235,16 @@ export class GameScene extends Scene {
       const dx   = this._introCX - p.x;
       const dy   = this._introCY - p.y;
       const dist = Math.hypot(dx, dy);
-      const fade = Math.min(1, (dist - R * 0.5) / (R * 2.0));
-      const a    = p.alpha * Math.max(0, fade);
+      const fade = R > 0 ? Math.min(1, (dist - R * 0.5) / (R * 2.0)) : 1;
+      const a    = p.alpha * Math.max(0, fade) * shrink;
       if (a < 0.01) continue;
 
-      const trailLen = Math.min(10, dist * 0.12);
-      if (trailLen > 1.5) {
+      const sz       = p.size * shrink;
+      const trailLen = Math.min(10, dist * 0.12) * shrink;
+      if (trailLen > 1) {
         ctx.globalAlpha = a * 0.38;
         ctx.strokeStyle = p.color;
-        ctx.lineWidth   = p.size * 0.65;
+        ctx.lineWidth   = sz * 0.65;
         ctx.beginPath();
         ctx.moveTo(p.x - (dx / dist) * trailLen, p.y - (dy / dist) * trailLen);
         ctx.lineTo(p.x, p.y);
@@ -216,7 +253,7 @@ export class GameScene extends Scene {
       ctx.globalAlpha = a;
       ctx.fillStyle   = p.color;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.arc(p.x, p.y, sz, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.lineCap     = 'butt';
@@ -294,6 +331,8 @@ export class GameScene extends Scene {
     if (this._introPhase !== 'done') {
       this._drawIntroParticles(ctx);  // particles on top of tiles/players
       this._drawIntroPortal(ctx);     // portal void drawn last (covers centre)
+    } else if (this._introParticles.length > 0) {
+      this._drawIntroParticles(ctx);  // shrinking out after portal seals
     }
     ctx.restore();
 
