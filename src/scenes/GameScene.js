@@ -4,6 +4,7 @@ import { Level1 } from '../levels/Level1.js';
 import { WaveManager } from '../systems/WaveManager.js';
 import { DeathScene } from './DeathScene.js';
 import { PauseScene } from './PauseScene.js';
+import { Portal } from '../entities/Portal.js';
 
 export class GameScene extends Scene {
   onEnter() {
@@ -11,6 +12,7 @@ export class GameScene extends Scene {
     this.camera = new Camera(this.game.canvas.width, this.game.canvas.height);
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
+    this._portalSpawned = false;
 
     // Init run stats (reset each new game)
     this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
@@ -30,6 +32,15 @@ export class GameScene extends Scene {
     this.game.state.stats.timeElapsed += dt;
     this.level.update(dt);
     this.waves.update();
+
+    // Spawn portal at map centre after boss is defeated
+    if (this.waves.bossDefeated && !this._portalSpawned) {
+      const { map, tileSize: ts } = this.level;
+      const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
+      const cy = Math.floor(map.length / 2) * ts + ts / 2;
+      this.level.addEntity(new Portal(this.level, cx, cy));
+      this._portalSpawned = true;
+    }
 
     if (this.game.input.justPressed('KeyV') && !this.waves.active && !this.waves.bossDefeated) {
       this.waves.startWave();
