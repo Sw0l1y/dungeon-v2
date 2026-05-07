@@ -65,12 +65,17 @@ export class LobbyScene extends Scene {
     return { x: this._cardX(slotIdx) + 20, y: this._cardY + 68, w: CARD_W - 40, h: 38 };
   }
 
-  _colorLeft(slotIdx) {
-    return { x: this._cardX(slotIdx) + 20, y: this._cardY + 165, w: 44, h: 52 };
-  }
-
-  _colorRight(slotIdx) {
-    return { x: this._cardX(slotIdx) + CARD_W - 64, y: this._cardY + 165, w: 44, h: 52 };
+  // Returns the hit-rect for one swatch in the 3×2 color grid
+  _colorSwatch(slotIdx, colorIdx) {
+    const sw = 34, sh = 34, gap = 8, cols = 3;
+    const gridW = cols * sw + (cols - 1) * gap;
+    const gridX = this._cardX(slotIdx) + (CARD_W - gridW) / 2;
+    const gridY = this._cardY + 148;
+    return {
+      x: gridX + (colorIdx % cols) * (sw + gap),
+      y: gridY + Math.floor(colorIdx / cols) * (sh + gap),
+      w: sw, h: sh,
+    };
   }
 
   _addP2Btn() {
@@ -142,9 +147,14 @@ export class LobbyScene extends Scene {
     for (const i of [0, 1]) {
       if (!this._slots[i].active) continue;
 
-      if (this._hit(this._nameField(i), pt))  { this._editingSlot = i; return; }
-      if (this._hit(this._colorLeft(i), pt))  { this._cycleColor(i, -1); return; }
-      if (this._hit(this._colorRight(i), pt)) { this._cycleColor(i, +1); return; }
+      if (this._hit(this._nameField(i), pt)) { this._editingSlot = i; return; }
+      // Color grid — direct swatch selection
+      for (let ci = 0; ci < COLORS.length; ci++) {
+        if (this._hit(this._colorSwatch(i, ci), pt)) {
+          if (!this._takenColorIdxs(i).has(ci)) this._slots[i].colorIdx = ci;
+          return;
+        }
+      }
 
       if (i === 1 && this._hit(this._removeP2Btn(), pt)) {
         this._slots[1].active = false;
@@ -161,14 +171,6 @@ export class LobbyScene extends Scene {
     const taken = new Set();
     this._slots.forEach((s, i) => { if (i !== forSlotIdx && s.active) taken.add(s.colorIdx); });
     return taken;
-  }
-
-  _cycleColor(slotIdx, dir) {
-    const taken = this._takenColorIdxs(slotIdx);
-    let next    = (this._slots[slotIdx].colorIdx + dir + COLORS.length) % COLORS.length;
-    let tries   = COLORS.length;
-    while (taken.has(next) && tries-- > 0) next = (next + dir + COLORS.length) % COLORS.length;
-    this._slots[slotIdx].colorIdx = next;
   }
 
   _resolveColorConflict(slotIdx) {
@@ -299,53 +301,62 @@ export class LobbyScene extends Scene {
   }
 
   _drawColorField(ctx, i, color) {
-    const cY      = this._cardY + 165;
-    const cH      = 52;
-    const sx      = this._cardX(i);
-    const lBtn    = this._colorLeft(i);
-    const rBtn    = this._colorRight(i);
-    const lHover  = this._hit(lBtn, this._mouse);
-    const rHover  = this._hit(rBtn, this._mouse);
+    const sx    = this._cardX(i);
+    const taken = this._takenColorIdxs(i);
 
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.font = '11px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('COLOR', sx + 20, cY - 12);
+    // Section label
+    ctx.fillStyle    = 'rgba(255,255,255,0.35)';
+    ctx.font         = '11px "Trebuchet MS", sans-serif';
+    ctx.textAlign    = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('COLOR', sx + 20, this._cardY + 136);
 
-    // Field bg
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    ctx.beginPath(); ctx.roundRect(sx + 20, cY, CARD_W - 40, cH, 6); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.1)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.roundRect(sx + 20, cY, CARD_W - 40, cH, 6); ctx.stroke();
+    // Draw each swatch
+    for (let ci = 0; ci < COLORS.length; ci++) {
+      const s       = this._colorSwatch(i, ci);
+      const sel     = this._slots[i].colorIdx === ci;
+      const isTaken = taken.has(ci);
+      const hovered = !isTaken && !sel && this._hit(s, this._mouse);
 
-    // Swatch
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.roundRect(sx + CARD_W / 2 - 16, cY + 10, 32, 32, 5); ctx.fill();
+      // Swatch fill (dimmed when taken)
+      ctx.save();
+      ctx.globalAlpha = isTaken ? 0.28 : 1;
+      ctx.fillStyle   = COLORS[ci];
+      ctx.beginPath(); ctx.roundRect(s.x, s.y, s.w, s.h, 6); ctx.fill();
+      ctx.restore();
 
-    // Color name
-    ctx.fillStyle = 'rgba(255,255,255,0.4)';
-    ctx.font = '11px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(COLOR_NAMES[this._slots[i].colorIdx], sx + CARD_W / 2, cY + cH + 10);
+      // Selection ring
+      if (sel) {
+        ctx.strokeStyle = color;
+        ctx.lineWidth   = 2.5;
+        ctx.beginPath(); ctx.roundRect(s.x - 3, s.y - 3, s.w + 6, s.h + 6, 9); ctx.stroke();
+      } else if (hovered) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth   = 1.5;
+        ctx.beginPath(); ctx.roundRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4, 7); ctx.stroke();
+      }
 
-    // TAKEN overlay if this color is claimed by another active player
-    if (this._takenColorIdxs(i).has(this._slots[i].colorIdx)) {
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.beginPath(); ctx.roundRect(sx + 20, cY, CARD_W - 40, cH, 6); ctx.fill();
-      ctx.fillStyle = 'rgba(255,80,80,0.65)';
-      ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('TAKEN', sx + CARD_W / 2, cY + cH / 2);
+      // Red ✕ over taken swatches
+      if (isTaken) {
+        ctx.strokeStyle = 'rgba(255,50,50,0.9)';
+        ctx.lineWidth   = 2.5;
+        ctx.lineCap     = 'round';
+        ctx.beginPath();
+        ctx.moveTo(s.x + 7,       s.y + 7);
+        ctx.lineTo(s.x + s.w - 7, s.y + s.h - 7);
+        ctx.moveTo(s.x + s.w - 7, s.y + 7);
+        ctx.lineTo(s.x + 7,       s.y + s.h - 7);
+        ctx.stroke();
+        ctx.lineCap = 'butt';
+      }
     }
 
-    // Arrow buttons
-    ctx.font = 'bold 22px monospace';
-    ctx.textBaseline = 'middle'; ctx.textAlign = 'center';
-    ctx.fillStyle = lHover ? '#8cf3ff' : 'rgba(255,255,255,0.35)';
-    ctx.fillText('‹', lBtn.x + lBtn.w / 2, cY + cH / 2);
-    ctx.fillStyle = rHover ? '#8cf3ff' : 'rgba(255,255,255,0.35)';
-    ctx.fillText('›', rBtn.x + rBtn.w / 2, cY + cH / 2);
+    // Selected color name below grid
+    ctx.fillStyle    = 'rgba(255,255,255,0.4)';
+    ctx.font         = '11px "Trebuchet MS", sans-serif';
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(COLOR_NAMES[this._slots[i].colorIdx], sx + CARD_W / 2, this._cardY + 232);
   }
 
   _drawRemoveBtn(ctx) {
