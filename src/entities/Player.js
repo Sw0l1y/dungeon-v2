@@ -27,6 +27,8 @@ export class Player {
     this._dashDirY  = 0;
     this._dashHit   = new Set();
     this._dashTrail = [];
+    // Archer targeting
+    this._aimTarget = null;
   }
 
   takeDamage(amount) {
@@ -135,17 +137,35 @@ export class Player {
   }
 
   _nearestEnemy() {
-    let bestLos = null, bestLosDist = Infinity;
-    let bestAny = null, bestAnyDist = Infinity;
+    // Threat score = estimated seconds to reach player (lower = more dangerous).
+    // Enemies behind walls get a 2.5x distance penalty since they must path around.
+    const LOS_PENALTY  = 2.5;
+    // Only retarget if the new candidate is 30% more threatening than the current lock.
+    // Prevents jittery switching between equally-dangerous enemies.
+    const SWITCH_THRESHOLD = 0.70;
+
+    let bestScore  = Infinity;
+    let bestTarget = null;
 
     for (const e of this.level.entities) {
       if (!e.isEnemy || !e.alive) continue;
-      const d = Math.hypot(e.x - this.x, e.y - this.y);
-      if (d < bestAnyDist) { bestAnyDist = d; bestAny = e; }
-      if (d < bestLosDist && this._hasLos(e)) { bestLosDist = d; bestLos = e; }
+      const dist        = Math.hypot(e.x - this.x, e.y - this.y);
+      const los         = this._hasLos(e);
+      const effDist     = los ? dist : dist * LOS_PENALTY;
+      const score       = effDist / (e.speed || 75); // seconds to reach
+      if (score < bestScore) { bestScore = score; bestTarget = e; }
     }
 
-    return bestLos ?? bestAny;
+    // Stickiness: keep current lock unless the new target is significantly more threatening
+    if (this._aimTarget?.alive) {
+      const cd      = Math.hypot(this._aimTarget.x - this.x, this._aimTarget.y - this.y);
+      const cLos    = this._hasLos(this._aimTarget);
+      const cScore  = (cLos ? cd : cd * LOS_PENALTY) / (this._aimTarget.speed || 75);
+      if (bestScore >= cScore * SWITCH_THRESHOLD) return this._aimTarget;
+    }
+
+    this._aimTarget = bestTarget;
+    return bestTarget;
   }
 
   _hasLos(target) {
