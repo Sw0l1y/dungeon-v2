@@ -135,13 +135,31 @@ export class Player {
   }
 
   _nearestEnemy() {
-    let nearest = null, best = Infinity;
+    let bestLos = null, bestLosDist = Infinity;
+    let bestAny = null, bestAnyDist = Infinity;
+
     for (const e of this.level.entities) {
       if (!e.isEnemy || !e.alive) continue;
       const d = Math.hypot(e.x - this.x, e.y - this.y);
-      if (d < best) { best = d; nearest = e; }
+      if (d < bestAnyDist) { bestAnyDist = d; bestAny = e; }
+      if (d < bestLosDist && this._hasLos(e)) { bestLosDist = d; bestLos = e; }
     }
-    return nearest;
+
+    return bestLos ?? bestAny;
+  }
+
+  _hasLos(target) {
+    const { map, tileSize: ts } = this.level;
+    const dx    = target.x - this.x;
+    const dy    = target.y - this.y;
+    const steps = Math.ceil(Math.hypot(dx, dy) / (ts * 0.4));
+    for (let i = 1; i < steps; i++) {
+      const t   = i / steps;
+      const col = Math.floor((this.x + dx * t) / ts);
+      const row = Math.floor((this.y + dy * t) / ts);
+      if (map[row]?.[col] === 1) return false;
+    }
+    return true;
   }
 
   _collidesAt(x, y) {
