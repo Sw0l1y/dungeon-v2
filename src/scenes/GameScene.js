@@ -31,6 +31,13 @@ export class GameScene extends Scene {
     this.camera.snapTo(this._introCX, this._introCY);
     this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
 
+    // Intro ambient particles (stream toward the opening portal)
+    this._introParticles = [];
+    this._initIntroParticles();
+
+    // Players start invisible (grow in with the portal)
+    for (const pl of this.level.players) pl.spawnScale = 0;
+
     // Init run stats (reset each new game)
     this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
   }
@@ -100,10 +107,14 @@ export class GameScene extends Scene {
     this._introT     += dt;
     this._introAngle += 1.1 * dt;
 
+    this._updateIntroParticles(dt);
+
     if (this._introPhase === 'opening') {
       const p    = Math.min(1, this._introT / this._INTRO_OPEN_S);
       const ease = 1 - Math.pow(1 - p, 3);          // easeOutCubic
       this._introR = ease * this._INTRO_MAX_R;
+      // Player model grows with the portal
+      for (const pl of this.level.players) pl.spawnScale = ease;
       if (this._introT >= this._INTRO_OPEN_S) {
         this._introPhase = 'stable';
         this._introT = 0;
@@ -111,6 +122,7 @@ export class GameScene extends Scene {
 
     } else if (this._introPhase === 'stable') {
       this._introR = this._INTRO_MAX_R;
+      for (const pl of this.level.players) pl.spawnScale = 1;
       if (this._introT >= this._INTRO_STABLE_S) {
         this._introPhase = 'closing';
         this._introT = 0;
@@ -123,9 +135,93 @@ export class GameScene extends Scene {
       if (this._introT >= this._INTRO_CLOSE_S) {
         this._introPhase = 'done';
         this._introR = 0;
+        for (const pl of this.level.players) pl.spawnScale = 1;
+        this._introParticles = [];
         this.waves.startWave();   // first wave starts the moment portal seals
       }
     }
+  }
+
+  // ── Intro particle helpers ─────────────────────────────────────────────────
+
+  _makeIntroParticle(anywhere) {
+    const { worldWidth: ww, worldHeight: wh } = this.level;
+    const COLORS = ['#8cf3ff', '#c77dff', '#b4a0ff', '#ffffff', '#a0d4ff'];
+    let x, y;
+    if (anywhere) {
+      x = 60 + Math.random() * (ww - 120);
+      y = 60 + Math.random() * (wh - 120);
+    } else {
+      const edge = Math.floor(Math.random() * 4);
+      x = edge === 2 ? 50 : edge === 3 ? ww - 50 : 50 + Math.random() * (ww - 100);
+      y = edge === 0 ? 50 : edge === 1 ? wh - 50 : 50 + Math.random() * (wh - 100);
+    }
+    return {
+      x, y,
+      size:  0.7 + Math.random() * 1.8,
+      color: COLORS[Math.floor(Math.random() * COLORS.length)],
+      alpha: 0.25 + Math.random() * 0.55,
+    };
+  }
+
+  _initIntroParticles() {
+    for (let i = 0; i < 110; i++) {
+      this._introParticles.push(this._makeIntroParticle(true));
+    }
+  }
+
+  _updateIntroParticles(dt) {
+    const cx = this._introCX, cy = this._introCY;
+    const R  = this._introR;
+    const SWIRL = 0.42;
+    for (let i = 0; i < this._introParticles.length; i++) {
+      const p    = this._introParticles[i];
+      const dx   = cx - p.x;
+      const dy   = cy - p.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      if (dist < Math.max(R * 0.45, 5)) {
+        this._introParticles[i] = this._makeIntroParticle(false);
+        continue;
+      }
+      const radial     = (28000 / (dist + 80) + 8000 / (dist * dist + 300)) * dt;
+      const tx = dy / dist, ty = -dx / dist;
+      const tangential = SWIRL * (5500 / (dist + 120)) * dt;
+      p.x += (dx / dist) * radial + tx * tangential;
+      p.y += (dy / dist) * radial + ty * tangential;
+    }
+  }
+
+  _drawIntroParticles(ctx) {
+    const R = this._introR;
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (const p of this._introParticles) {
+      const dx   = this._introCX - p.x;
+      const dy   = this._introCY - p.y;
+      const dist = Math.hypot(dx, dy);
+      const fade = Math.min(1, (dist - R * 0.5) / (R * 2.0));
+      const a    = p.alpha * Math.max(0, fade);
+      if (a < 0.01) continue;
+
+      const trailLen = Math.min(10, dist * 0.12);
+      if (trailLen > 1.5) {
+        ctx.globalAlpha = a * 0.38;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth   = p.size * 0.65;
+        ctx.beginPath();
+        ctx.moveTo(p.x - (dx / dist) * trailLen, p.y - (dy / dist) * trailLen);
+        ctx.lineTo(p.x, p.y);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = a;
+      ctx.fillStyle   = p.color;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.lineCap     = 'butt';
+    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   _drawIntroPortal(ctx) {
@@ -195,7 +291,10 @@ export class GameScene extends Scene {
     ctx.save();
     this.camera.applyTransform(ctx);
     this.level.draw(ctx);
-    if (this._introPhase !== 'done') this._drawIntroPortal(ctx);
+    if (this._introPhase !== 'done') {
+      this._drawIntroParticles(ctx);  // particles on top of tiles/players
+      this._drawIntroPortal(ctx);     // portal void drawn last (covers centre)
+    }
     ctx.restore();
 
     this._drawHud(ctx);

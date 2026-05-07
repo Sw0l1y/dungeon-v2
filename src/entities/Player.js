@@ -31,6 +31,8 @@ export class Player {
     this._aimTarget = null;
     // Downed / revive state
     this._downed = false;
+    // Spawn-in scale (0 → 1 during intro portal; 1 = normal)
+    this.spawnScale = 1;
     // Stats
     this.dmgDealt = 0;
     this.dmgTaken = 0;
@@ -283,6 +285,17 @@ export class Player {
   draw(ctx) {
     if (this._downed) { this._drawDowned(ctx); return; }
 
+    // Spawn-in scale — grows from 0 during the intro portal sequence
+    const scale = this.spawnScale;
+    if (scale <= 0.01) return;
+    const scaled = scale < 0.999;
+    if (scaled) {
+      ctx.save();
+      ctx.translate(this.x, this.y);
+      ctx.scale(scale, scale);
+      ctx.translate(-this.x, -this.y);
+    }
+
     // Rogue dash trail
     for (const t of this._dashTrail) {
       ctx.save();
@@ -347,5 +360,7 @@ export class Player {
     ctx.fill();
     ctx.fillStyle = this.color;
     ctx.fillText(this.name, this.x, tagY);
+
+    if (scaled) ctx.restore();
   }
 }
