@@ -26,7 +26,7 @@ export class SwordSwing {
         if (Math.hypot(e.x - this.x, e.y - this.y) > this.range + e.radius) continue;
         let diff = Math.atan2(e.y - this.y, e.x - this.x) - base;
         diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI; // wrap to [-π, π]
-        if (Math.abs(diff) <= half) e.die();
+        if (Math.abs(diff) <= half) e.takeDamage(35);
       }
     }
 

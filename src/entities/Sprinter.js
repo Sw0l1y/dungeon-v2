@@ -1,17 +1,17 @@
 import { astar } from '../systems/Pathfinding.js';
 
-export class Enemy {
+export class Sprinter {
   constructor(level, x, y) {
-    this.level  = level;
-    this.x      = x;
-    this.y      = y;
-    this.radius = 12;
-    this.speed  = 75;
-    this.maxHp  = 70;
-    this.hp     = 70;
-    this.alive  = true;
-    this.isEnemy = true;
-    this.damage  = 10;
+    this.level    = level;
+    this.x        = x;
+    this.y        = y;
+    this.radius   = 9;
+    this.speed    = 210;
+    this.maxHp    = 35;
+    this.hp       = 35;
+    this.alive    = true;
+    this.isEnemy  = true;
+    this.damage   = 15;
     this._hitCooldown = 0;
     this._path        = [];
     this._pathTimer   = 0;
@@ -34,6 +34,7 @@ export class Enemy {
     const players = this.level.players.filter(p => p.alive);
     if (players.length === 0) return;
 
+    // Chase nearest player
     let nearest = null, nearestDist = Infinity;
     for (const p of players) {
       const d = Math.hypot(p.x - this.x, p.y - this.y);
@@ -41,21 +42,21 @@ export class Enemy {
     }
     if (!nearest) return;
 
-    // Refresh path periodically or when we've consumed all waypoints
+    // Refresh path more aggressively than basic enemy
     this._pathTimer -= dt;
     if (this._pathTimer <= 0 || this._path.length === 0) {
-      this._pathTimer = 0.35;
+      this._pathTimer = 0.25;
       this._recalcPath(nearest);
     }
 
     const ts = this.level.tileSize;
 
     if (this._path.length > 0) {
-      const wp = this._path[0];
-      const tx = (wp.c + 0.5) * ts;
-      const ty = (wp.r + 0.5) * ts;
-      const dx = tx - this.x;
-      const dy = ty - this.y;
+      const wp   = this._path[0];
+      const tx   = (wp.c + 0.5) * ts;
+      const ty   = (wp.r + 0.5) * ts;
+      const dx   = tx - this.x;
+      const dy   = ty - this.y;
       const dist = Math.hypot(dx, dy);
 
       if (dist < ts * 0.35) {
@@ -67,12 +68,11 @@ export class Enemy {
         if (!this._collidesAt(this.x, ny)) this.y = ny;
       }
     } else {
-      // Direct chase fallback (target is in same tile)
       const dx  = nearest.x - this.x;
       const dy  = nearest.y - this.y;
       const len = Math.hypot(dx, dy) || 1;
-      const nx = this.x + (dx / len) * this.speed * dt;
-      const ny = this.y + (dy / len) * this.speed * dt;
+      const nx  = this.x + (dx / len) * this.speed * dt;
+      const ny  = this.y + (dy / len) * this.speed * dt;
       if (!this._collidesAt(nx, this.y)) this.x = nx;
       if (!this._collidesAt(this.x, ny)) this.y = ny;
     }
@@ -126,23 +126,27 @@ export class Enemy {
   }
 
   draw(ctx) {
-    // Glow ring
-    ctx.strokeStyle = 'rgba(255,60,60,0.35)';
-    ctx.lineWidth = 4;
+    // Glow ring — bright red, smaller
+    ctx.strokeStyle = 'rgba(255,90,90,0.4)';
+    ctx.lineWidth   = 3;
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius + 4, 0, Math.PI * 2);
+    ctx.arc(this.x, this.y, this.radius + 3, 0, Math.PI * 2);
     ctx.stroke();
 
     // Body
-    ctx.fillStyle = '#e03030';
+    ctx.fillStyle = '#ff5a5a';
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
 
     // Health bar
-    const barW = 28, barH = 3;
+    this._drawHealthBar(ctx);
+  }
+
+  _drawHealthBar(ctx) {
+    const barW = 24, barH = 3;
     const barX = this.x - barW / 2;
-    const barY = this.y - this.radius - 9;
+    const barY = this.y - this.radius - 7;
     ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(barX, barY, barW, barH);
     const pct = this.hp / this.maxHp;

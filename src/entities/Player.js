@@ -82,7 +82,7 @@ export class Player {
       for (const e of [...this.level.entities]) {
         if (!e.isEnemy || !e.alive || this._dashHit.has(e)) continue;
         if (Math.hypot(e.x - this.x, e.y - this.y) < this.radius + e.radius + 2) {
-          e.die();
+          e.takeDamage(50);
           this._dashHit.add(e);
         }
       }

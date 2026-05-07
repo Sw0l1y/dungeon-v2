@@ -1,4 +1,6 @@
-import { Enemy } from '../entities/Enemy.js';
+import { Enemy    } from '../entities/Enemy.js';
+import { Sprinter } from '../entities/Sprinter.js';
+import { Ranger   } from '../entities/Ranger.js';
 
 export class WaveManager {
   constructor(level) {
@@ -17,15 +19,21 @@ export class WaveManager {
     this.active   = true;
     this._enemies = [];
 
-    const count = 3 + this.wave * 2;
-    const spots  = this._spawnSpots();
+    const spots     = this._spawnSpots();
+    const basics    = 2 + this.wave;
+    const sprinters = Math.max(0, this.wave - 1);
+    const rangers   = Math.max(0, this.wave - 2);
 
-    for (let i = 0; i < count; i++) {
+    const spawn = (Type) => {
       const { x, y } = spots[Math.floor(Math.random() * spots.length)];
-      const e = new Enemy(this.level, x, y);
+      const e = new Type(this.level, x, y);
       this.level.addEntity(e);
       this._enemies.push(e);
-    }
+    };
+
+    for (let i = 0; i < basics;    i++) spawn(Enemy);
+    for (let i = 0; i < sprinters; i++) spawn(Sprinter);
+    for (let i = 0; i < rangers;   i++) spawn(Ranger);
   }
 
   update() {
