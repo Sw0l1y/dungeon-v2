@@ -37,10 +37,14 @@ export class Level1 extends Level {
     const configs = this.game.state.players ?? [
       { name: 'Player 1', color: '#8cf3ff', binding: this.game.bindings.player1 },
     ];
+    // Spawn at map centre so players emerge from the intro portal
+    const cx = Math.floor(MAP[0].length / 2) * TILE + TILE / 2;
+    const cy = Math.floor(MAP.length    / 2) * TILE + TILE / 2;
     configs.forEach((cfg, i) => {
+      const offset = configs.length > 1 ? (i === 0 ? -14 : 14) : 0;
       this.addPlayer(new Player(
         this.game, this,
-        (2.5 + i * 3) * TILE, 2.5 * TILE,
+        cx + offset, cy,
         cfg.binding, cfg.name, cfg.color, cfg.classId ?? 'sword',
       ));
     });

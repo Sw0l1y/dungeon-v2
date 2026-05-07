@@ -11,9 +11,11 @@ export class WaveManager {
     this.bossDefeated = false;
     this._enemies     = [];
     this._spawnCache  = null;
+    this._countdown   = 0;   // seconds until next wave auto-starts
   }
 
-  get remaining() { return this._enemies.filter(e => e.alive).length; }
+  get remaining()  { return this._enemies.filter(e => e.alive).length; }
+  get countdown()  { return this._countdown; }
 
   startWave() {
     if (this.active || this.bossDefeated) return;
@@ -51,10 +53,22 @@ export class WaveManager {
     for (let i = 0; i < rangers;   i++) spawn(Ranger);
   }
 
-  update() {
-    if (!this.active) return;
-    this._enemies = this._enemies.filter(e => e.alive);
-    if (this._enemies.length === 0) this.active = false;
+  update(dt) {
+    if (this.active) {
+      this._enemies = this._enemies.filter(e => e.alive);
+      if (this._enemies.length === 0) {
+        this.active = false;
+        // Start 15s inter-wave countdown (not after boss — that ends the run)
+        if (!this.bossDefeated) this._countdown = 15;
+      }
+      return;
+    }
+
+    // Tick down inter-wave countdown
+    if (this._countdown > 0 && !this.bossDefeated) {
+      this._countdown = Math.max(0, this._countdown - dt);
+      if (this._countdown === 0) this.startWave();
+    }
   }
 
   // Collect valid floor tiles in the outer 35% of the map, cached after first call.

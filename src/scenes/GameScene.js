@@ -14,6 +14,23 @@ export class GameScene extends Scene {
     this.waves  = new WaveManager(this.level);
     this._portalSpawned = false;
 
+    // Intro portal
+    const { map, tileSize: ts } = this.level;
+    this._introCX    = Math.floor(map[0].length / 2) * ts + ts / 2;
+    this._introCY    = Math.floor(map.length    / 2) * ts + ts / 2;
+    this._introPhase = 'opening';   // 'opening' | 'stable' | 'closing' | 'done'
+    this._introT     = 0;
+    this._introR     = 0;
+    this._introAngle = 0;
+    this._INTRO_MAX_R   = 58;
+    this._INTRO_OPEN_S  = 1.1;
+    this._INTRO_STABLE_S = 0.6;
+    this._INTRO_CLOSE_S = 0.9;
+
+    // Snap camera to player spawn (centre) immediately
+    this.camera.snapTo(this._introCX, this._introCY);
+    this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
+
     // Init run stats (reset each new game)
     this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
   }
@@ -23,27 +40,31 @@ export class GameScene extends Scene {
   }
 
   update(dt) {
-    // Pause
+    // Pause (allowed even during intro)
     if (this.game.input.justPressed('Backquote')) {
       this.game.scenes.push(new PauseScene(this.game, this));
       return;
     }
 
     this.game.state.stats.timeElapsed += dt;
-    this.level.update(dt);
-    this.waves.update();
 
-    // Spawn portal at map centre after boss is defeated
-    if (this.waves.bossDefeated && !this._portalSpawned) {
-      const { map, tileSize: ts } = this.level;
-      const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
-      const cy = Math.floor(map.length / 2) * ts + ts / 2;
-      this.level.addEntity(new Portal(this.level, cx, cy));
-      this._portalSpawned = true;
+    // ── Intro portal sequence (players frozen until portal closes) ───────────
+    if (this._introPhase !== 'done') {
+      this._updateIntro(dt);
+      // Keep camera centred on spawn while portal plays
+      this.camera.follow(this._introCX, this._introCY, dt);
+      this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
+      return;
     }
 
-    if (this.game.input.justPressed('KeyV') && !this.waves.active && !this.waves.bossDefeated) {
-      this.waves.startWave();
+    // ── Normal gameplay ───────────────────────────────────────────────────────
+    this.level.update(dt);
+    this.waves.update(dt);
+
+    // Spawn death portal at map centre after boss is defeated
+    if (this.waves.bossDefeated && !this._portalSpawned) {
+      this.level.addEntity(new Portal(this.level, this._introCX, this._introCY));
+      this._portalSpawned = true;
     }
 
     const ps = this.level.players;
@@ -73,6 +94,100 @@ export class GameScene extends Scene {
     }
   }
 
+  // ── Intro portal helpers ────────────────────────────────────────────────────
+
+  _updateIntro(dt) {
+    this._introT     += dt;
+    this._introAngle += 1.1 * dt;
+
+    if (this._introPhase === 'opening') {
+      const p    = Math.min(1, this._introT / this._INTRO_OPEN_S);
+      const ease = 1 - Math.pow(1 - p, 3);          // easeOutCubic
+      this._introR = ease * this._INTRO_MAX_R;
+      if (this._introT >= this._INTRO_OPEN_S) {
+        this._introPhase = 'stable';
+        this._introT = 0;
+      }
+
+    } else if (this._introPhase === 'stable') {
+      this._introR = this._INTRO_MAX_R;
+      if (this._introT >= this._INTRO_STABLE_S) {
+        this._introPhase = 'closing';
+        this._introT = 0;
+      }
+
+    } else if (this._introPhase === 'closing') {
+      const p    = Math.min(1, this._introT / this._INTRO_CLOSE_S);
+      const ease = p * p * p;                        // easeInCubic
+      this._introR = (1 - ease) * this._INTRO_MAX_R;
+      if (this._introT >= this._INTRO_CLOSE_S) {
+        this._introPhase = 'done';
+        this._introR = 0;
+        this.waves.startWave();   // first wave starts the moment portal seals
+      }
+    }
+  }
+
+  _drawIntroPortal(ctx) {
+    const R = this._introR;
+    if (R < 0.5) return;
+    const x = this._introCX, y = this._introCY;
+    const t = Date.now();
+
+    // Rotating galaxy arms (3 outer)
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(this._introAngle);
+    for (let arm = 0; arm < 3; arm++) {
+      ctx.rotate((Math.PI * 2) / 3);
+      ctx.strokeStyle = 'rgba(140,100,255,0.32)';
+      ctx.lineWidth   = 6;
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.7, -0.55, 0.22);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(200,160,255,0.5)';
+      ctx.lineWidth   = 1.8;
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.35, -0.45, 0.14);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(220,200,255,0.22)';
+      ctx.lineWidth   = 1;
+      ctx.setLineDash([3, 6]);
+      ctx.beginPath();
+      ctx.arc(0, 0, R * 1.1, -0.38, 0.08);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    ctx.restore();
+
+    // Solid void
+    ctx.fillStyle = '#020008';
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Crisp pulsing rim
+    const rim = 0.75 + 0.2 * Math.sin(t / 260);
+    ctx.strokeStyle = `rgba(190,130,255,${rim})`;
+    ctx.lineWidth   = 1.8;
+    ctx.beginPath();
+    ctx.arc(x, y, R, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Bright core glow (only during opening)
+    if (this._introPhase === 'opening' || this._introPhase === 'stable') {
+      const coreA = 0.55 + 0.3 * Math.sin(t / 180);
+      const core  = ctx.createRadialGradient(x, y, 0, x, y, R * 0.45);
+      core.addColorStop(0,   `rgba(255,245,255,${coreA})`);
+      core.addColorStop(1,   'rgba(120,70,220,0)');
+      ctx.fillStyle = core;
+      ctx.beginPath();
+      ctx.arc(x, y, R * 0.45, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   draw(ctx) {
     const { width, height } = this.game.canvas;
     ctx.clearRect(0, 0, width, height);
@@ -80,6 +195,7 @@ export class GameScene extends Scene {
     ctx.save();
     this.camera.applyTransform(ctx);
     this.level.draw(ctx);
+    if (this._introPhase !== 'done') this._drawIntroPortal(ctx);
     ctx.restore();
 
     this._drawHud(ctx);
@@ -122,28 +238,33 @@ export class GameScene extends Scene {
       ctx.restore();
     }
 
-    // Bottom-center: wave prompt or status
+    // Bottom-center: wave status / countdown
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
 
-    if (!this.waves.active) {
-      // Pulsing prompt
-      const alpha = 0.45 + 0.25 * Math.sin(Date.now() / 500);
-      ctx.fillStyle = `rgba(255,255,255,${alpha})`;
-      ctx.font = '15px "Trebuchet MS", sans-serif';
-      ctx.fillText('V  —  start wave', W / 2, H - 16);
+    if (this._introPhase !== 'done') {
+      // Nothing — portal is the visual cue
     } else if (this.waves.bossDefeated) {
       ctx.fillStyle = '#ffe566';
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
       ctx.fillText('Boss Defeated!', W / 2, H - 16);
-    } else {
+    } else if (this.waves.active) {
       const rem = this.waves.remaining;
       ctx.fillStyle = rem > 0 ? '#ff7070' : '#a8ff78';
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
-      const label = rem > 0
-        ? `Wave ${this.waves.wave}  •  ${rem} enem${rem === 1 ? 'y' : 'ies'} left`
-        : `Wave ${this.waves.wave} cleared!  —  V for next wave`;
-      ctx.fillText(label, W / 2, H - 16);
+      ctx.fillText(
+        rem > 0
+          ? `Wave ${this.waves.wave}  •  ${rem} enem${rem === 1 ? 'y' : 'ies'} left`
+          : `Wave ${this.waves.wave} cleared!`,
+        W / 2, H - 16,
+      );
+    } else if (this.waves.countdown > 0) {
+      // Inter-wave countdown
+      const secs  = Math.ceil(this.waves.countdown);
+      const alpha = 0.55 + 0.3 * Math.sin(Date.now() / 400);
+      ctx.fillStyle = `rgba(200,160,255,${alpha})`;
+      ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
+      ctx.fillText(`Wave ${this.waves.wave + 1}  in  ${secs}s`, W / 2, H - 16);
     }
   }
 }
