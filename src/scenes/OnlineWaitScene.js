@@ -1,5 +1,5 @@
 import { Scene         } from './Scene.js';
-import { GameScene     } from './GameScene.js';
+import { ClassScene    } from './ClassScene.js';
 import { NetSession    } from '../systems/NetSession.js';
 import { RemoteBinding } from '../systems/RemoteBinding.js';
 
@@ -155,19 +155,20 @@ export class OnlineWaitScene extends Scene {
 
     // Players 0-1 are the host's two local players.
     // Players 2-3 are the client's two local players.
+    // remote:true marks the players driven by RemoteBinding — ClassScene skips them.
     if (role === 'host') {
       this.game.state.players = [
-        { name: 'P1', color: '#8cf3ff', binding: this.game.bindings.player1, classId: 'sword' },
-        { name: 'P2', color: '#ff8c42', binding: this.game.bindings.player2, classId: 'sword' },
-        { name: 'P3', color: '#a8ff78', binding: rb1,                        classId: 'sword' },
-        { name: 'P4', color: '#ff6b9d', binding: rb2,                        classId: 'sword' },
+        { name: 'P1', color: '#8cf3ff', binding: this.game.bindings.player1 },
+        { name: 'P2', color: '#ff8c42', binding: this.game.bindings.player2 },
+        { name: 'P3', color: '#a8ff78', binding: rb1, remote: true, classId: 'sword' },
+        { name: 'P4', color: '#ff6b9d', binding: rb2, remote: true, classId: 'sword' },
       ];
     } else {
       this.game.state.players = [
-        { name: 'P1', color: '#8cf3ff', binding: rb1,                         classId: 'sword' },
-        { name: 'P2', color: '#ff8c42', binding: rb2,                         classId: 'sword' },
-        { name: 'P3', color: '#a8ff78', binding: this.game.bindings.player1,  classId: 'sword' },
-        { name: 'P4', color: '#ff6b9d', binding: this.game.bindings.player2,  classId: 'sword' },
+        { name: 'P1', color: '#8cf3ff', binding: rb1, remote: true, classId: 'sword' },
+        { name: 'P2', color: '#ff8c42', binding: rb2, remote: true, classId: 'sword' },
+        { name: 'P3', color: '#a8ff78', binding: this.game.bindings.player1 },
+        { name: 'P4', color: '#ff6b9d', binding: this.game.bindings.player2 },
       ];
     }
 
@@ -175,7 +176,8 @@ export class OnlineWaitScene extends Scene {
     this.game.state.netRole         = role;
     this.game.state.remoteBindings  = [rb1, rb2];
 
-    this.game.scenes.switch(new GameScene(this.game));
+    // ClassScene handles class selection for local players only, then launches GameScene
+    this.game.scenes.switch(new ClassScene(this.game));
   }
 
   // ── Draw ───────────────────────────────────────────────────────────────────

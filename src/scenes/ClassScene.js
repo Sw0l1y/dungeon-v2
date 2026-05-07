@@ -1,4 +1,4 @@
-import { Scene } from './Scene.js';
+import { Scene     } from './Scene.js';
 import { GameScene } from './GameScene.js';
 
 const CLASSES = [
@@ -31,9 +31,26 @@ export class ClassScene extends Scene {
   // ── lifecycle ──────────────────────────────────────────────────────────────
 
   onEnter() {
-    this._selections  = this.game.state.players.map(() => null);
-    this._mouse       = { x: 0, y: 0 };
+    const allPlayers = this.game.state.players;
+
+    // Remote players (online) get a default class and are hidden from the UI.
+    // Local players start with no selection (null).
+    this._selections = allPlayers.map(p => p.remote ? (p.classId ?? 'sword') : null);
+
+    // Only show the non-remote players in the selection UI
+    this._localIdxs = allPlayers.map((p, i) => i).filter(i => !allPlayers[i].remote);
+
+    this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
+
+    // Online: client listens for host's start signal
+    const net  = this.game.state.netSession ?? null;
+    const role = this.game.state.netRole    ?? null;
+    if (net && role === 'client') {
+      net.onMessage = (data) => {
+        if (data.t === 'start') this._netLaunch();
+      };
+    }
 
     this._onMouseMove = (e) => {
       const r = this.game.canvas.getBoundingClientRect();
@@ -59,13 +76,13 @@ export class ClassScene extends Scene {
 
   // ── layout ─────────────────────────────────────────────────────────────────
 
-  _classCard(playerIdx, classIdx) {
-    const W        = this.game.canvas.width;
-    const n        = this.game.state.players.length;
-    const sectionW = n === 1 ? W : W / 2;
-    const sectionCX = playerIdx * sectionW + sectionW / 2;
+  // sectionIdx = 0,1 — position within the local-players display strip
+  _classCard(sectionIdx, classIdx) {
+    const W  = this.game.canvas.width;
+    const n  = this._localIdxs.length;
+    const sectionW  = n === 1 ? W : W / n;
+    const sectionCX = sectionIdx * sectionW + sectionW / 2;
     const nc  = CLASSES.length;
-    // Shrink cards to fit section with 40px side padding; cap at CARD_W
     const cw  = Math.min(CARD_W, Math.floor((sectionW - 40 - CARD_GAP * (nc - 1)) / nc));
     const totalW = cw * nc + CARD_GAP * (nc - 1);
     const startX = sectionCX - totalW / 2;
@@ -81,8 +98,9 @@ export class ClassScene extends Scene {
     return pt && pt.x >= x && pt.x <= x + w && pt.y >= y && pt.y <= y + h;
   }
 
+  // All local players have a non-null selection
   get _allSelected() {
-    return this._selections.every(s => s !== null);
+    return this._localIdxs.every(i => this._selections[i] !== null);
   }
 
   // ── update ────────────────────────────────────────────────────────────────
@@ -91,34 +109,60 @@ export class ClassScene extends Scene {
     const click = this._pendingClick;
     this._pendingClick = null;
 
-    if (this._allSelected && this.game.input.justPressed('Enter')) {
-      this._launch();
-      return;
+    const role = this.game.state.netRole ?? null;
+    const isClient = role === 'client';
+
+    // Host / local: Enter confirms when all selected
+    if (!isClient && this._allSelected && this.game.input.justPressed('Enter')) {
+      this._launch(); return;
     }
 
     if (click) this._handleClick(click);
   }
 
   _handleClick(pt) {
-    if (this._allSelected && this._hit(this._startBtn(), pt)) {
-      this._launch();
-      return;
+    const role     = this.game.state.netRole ?? null;
+    const isClient = role === 'client';
+
+    // START button — only host / local can press it
+    if (!isClient && this._allSelected && this._hit(this._startBtn(), pt)) {
+      this._launch(); return;
     }
 
-    this.game.state.players.forEach((_, pIdx) => {
+    // Class card clicks — iterate local players by their section index
+    this._localIdxs.forEach((playerGlobalIdx, sectionIdx) => {
       CLASSES.forEach((cls, cIdx) => {
-        if (this._hit(this._classCard(pIdx, cIdx), pt)) {
-          const takenByOther = this._selections.some((s, i) => i !== pIdx && s === cls.id);
-          if (!takenByOther) this._selections[pIdx] = cls.id;
+        if (this._hit(this._classCard(sectionIdx, cIdx), pt)) {
+          const takenByOtherLocal = this._localIdxs.some(
+            (gi, si) => si !== sectionIdx && this._selections[gi] === cls.id,
+          );
+          if (!takenByOtherLocal) this._selections[playerGlobalIdx] = cls.id;
         }
       });
     });
   }
 
+  // ── launch ────────────────────────────────────────────────────────────────
+
   _launch() {
+    const net  = this.game.state.netSession ?? null;
+    const role = this.game.state.netRole    ?? null;
+
+    // Host: signal client to start
+    if (role === 'host') net?.send({ t: 'start' });
+
+    this._finalize();
+  }
+
+  // Called on client when host sends {t:'start'}
+  _netLaunch() {
+    this._finalize();
+  }
+
+  _finalize() {
     this.game.state.players = this.game.state.players.map((p, i) => ({
       ...p,
-      classId: this._selections[i],
+      classId: this._selections[i] ?? 'sword',
     }));
     this.game.scenes.switch(new GameScene(this.game));
   }
@@ -136,36 +180,40 @@ export class ClassScene extends Scene {
     ctx.textBaseline = 'middle';
     ctx.fillText('SELECT CLASS', W / 2, 56);
 
-    const players = this.game.state.players;
+    const allPlayers    = this.game.state.players;
+    const n             = this._localIdxs.length;
+    const role          = this.game.state.netRole ?? null;
+    const isClient      = role === 'client';
 
-    // Divider for 2-player layout
-    if (players.length === 2) {
-      ctx.strokeStyle = 'rgba(140,243,255,0.1)';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(W / 2, 90); ctx.lineTo(W / 2, H - 60);
-      ctx.stroke();
+    // Section dividers for multi-player
+    if (n >= 2) {
+      for (let s = 1; s < n; s++) {
+        const lx = (W / n) * s;
+        ctx.strokeStyle = 'rgba(140,243,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(lx, 90); ctx.lineTo(lx, H - 60); ctx.stroke();
+      }
     }
 
-    players.forEach((p, pIdx) => {
-      const n        = players.length;
-      const sectionW = n === 1 ? W : W / 2;
-      const sectionCX = pIdx * sectionW + sectionW / 2;
+    // Draw each local player's section
+    this._localIdxs.forEach((globalIdx, sectionIdx) => {
+      const p        = allPlayers[globalIdx];
+      const sectionW = n === 1 ? W : W / n;
+      const sectionCX = sectionIdx * sectionW + sectionW / 2;
 
       // Player label
       ctx.fillStyle = p.color;
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(p.name, sectionCX, 130);
 
-      // Hint for unselected
-      if (this._selections[pIdx] === null) {
+      // Selection state hint
+      if (this._selections[globalIdx] === null) {
         ctx.fillStyle = 'rgba(255,255,255,0.25)';
         ctx.font = '13px "Trebuchet MS", sans-serif';
         ctx.fillText('click to choose', sectionCX, 155);
       } else {
-        const chosen = CLASSES.find(c => c.id === this._selections[pIdx]);
+        const chosen = CLASSES.find(c => c.id === this._selections[globalIdx]);
         ctx.fillStyle = 'rgba(255,255,255,0.5)';
         ctx.font = '13px "Trebuchet MS", sans-serif';
         ctx.fillText(`✓ ${chosen.name} selected`, sectionCX, 155);
@@ -173,37 +221,55 @@ export class ClassScene extends Scene {
 
       // Class cards
       CLASSES.forEach((cls, cIdx) => {
-        const card     = this._classCard(pIdx, cIdx);
-        const selected = this._selections[pIdx] === cls.id;
-        const locked   = this._selections.some((s, i) => i !== pIdx && s === cls.id);
+        const card     = this._classCard(sectionIdx, cIdx);
+        const selected = this._selections[globalIdx] === cls.id;
+        // A class is locked if another LOCAL player already claimed it
+        const locked   = this._localIdxs.some(
+          (gi, si) => si !== sectionIdx && this._selections[gi] === cls.id,
+        );
         const hovered  = !locked && this._hit(card, this._mouse);
         this._drawClassCard(ctx, card, cls, p.color, selected, hovered, locked);
       });
     });
 
-    // START button
+    // START / waiting hint
     const canStart = this._allSelected;
-    const startBtn = this._startBtn();
-    const startHover = this._hit(startBtn, this._mouse);
-    ctx.fillStyle = canStart
-      ? (startHover ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)')
-      : 'rgba(255,255,255,0.04)';
-    ctx.beginPath(); ctx.roundRect(startBtn.x, startBtn.y, startBtn.w, startBtn.h, 8); ctx.fill();
-    ctx.strokeStyle = canStart
-      ? (startHover ? '#8cf3ff' : 'rgba(140,243,255,0.3)')
-      : 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = canStart && startHover ? 2 : 1;
-    ctx.beginPath(); ctx.roundRect(startBtn.x, startBtn.y, startBtn.w, startBtn.h, 8); ctx.stroke();
-    ctx.fillStyle = canStart ? (startHover ? '#8cf3ff' : 'rgba(255,255,255,0.6)') : 'rgba(255,255,255,0.2)';
-    ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('START GAME', startBtn.x + startBtn.w / 2, startBtn.y + startBtn.h / 2);
+    if (isClient) {
+      // Client: show status instead of START button
+      ctx.fillStyle = canStart ? 'rgba(140,243,255,0.55)' : 'rgba(255,255,255,0.3)';
+      ctx.font = canStart ? 'bold 16px "Trebuchet MS", sans-serif' : '15px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(
+        canStart ? 'Waiting for host to start...' : 'Select your class',
+        W / 2, 454,
+      );
+    } else {
+      // Host or local: draw START button
+      const startBtn   = this._startBtn();
+      const startHover = this._hit(startBtn, this._mouse);
+      ctx.fillStyle = canStart
+        ? (startHover ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)')
+        : 'rgba(255,255,255,0.04)';
+      ctx.beginPath(); ctx.roundRect(startBtn.x, startBtn.y, startBtn.w, startBtn.h, 8); ctx.fill();
+      ctx.strokeStyle = canStart
+        ? (startHover ? '#8cf3ff' : 'rgba(140,243,255,0.3)')
+        : 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = canStart && startHover ? 2 : 1;
+      ctx.beginPath(); ctx.roundRect(startBtn.x, startBtn.y, startBtn.w, startBtn.h, 8); ctx.stroke();
+      ctx.fillStyle = canStart ? (startHover ? '#8cf3ff' : 'rgba(255,255,255,0.6)') : 'rgba(255,255,255,0.2)';
+      ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('START GAME', startBtn.x + startBtn.w / 2, startBtn.y + startBtn.h / 2);
+    }
 
-    // Hint
+    // Bottom hint
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(canStart ? 'Click START or press Enter' : 'All players must select a class', W / 2, H - 16);
+    const hint = isClient
+      ? 'Select a class for each of your players'
+      : (canStart ? 'Click START or press Enter' : 'All players must select a class');
+    ctx.fillText(hint, W / 2, H - 16);
   }
 
   _drawClassCard(ctx, card, cls, playerColor, selected, hovered, locked = false) {
@@ -224,20 +290,17 @@ export class ClassScene extends Scene {
     ctx.save();
     if (locked) ctx.globalAlpha = 0.25;
 
-    // Class name
     ctx.fillStyle = selected ? playerColor : hovered ? '#fff' : 'rgba(255,255,255,0.7)';
     ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(cls.name.toUpperCase(), x + w / 2, y + 36);
 
-    // Description lines
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.font = '12px "Trebuchet MS", sans-serif';
     cls.lines.forEach((line, i) => {
       ctx.fillText(line, x + w / 2, y + 80 + i * 20);
     });
 
-    // Attack key
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.font = '11px "Trebuchet MS", sans-serif';
     ctx.fillText('ATTACK', x + w / 2, y + h - 36);
@@ -247,7 +310,6 @@ export class ClassScene extends Scene {
 
     ctx.restore();
 
-    // Locked overlay
     if (locked) {
       ctx.fillStyle = 'rgba(255,80,80,0.65)';
       ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
