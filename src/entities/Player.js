@@ -27,8 +27,10 @@ export class Player {
     this._dashDirY  = 0;
     this._dashHit   = new Set();
     this._dashTrail = [];
-    // Archer targeting
+    // Archer / rogue targeting
     this._aimTarget = null;
+    // Downed / revive state
+    this._downed = false;
     // Stats
     this.dmgDealt = 0;
     this.dmgTaken = 0;
@@ -40,7 +42,18 @@ export class Player {
     this.hp = Math.max(0, this.hp - amount);
     this.dmgTaken += dealt;
     this._iframes = 0.6;
-    if (this.hp === 0) this.alive = false;
+    if (this.hp === 0) {
+      this.alive   = false;
+      this._downed = true;
+    }
+  }
+
+  /** Revive this player with 40 % HP and brief iframes. */
+  revive() {
+    this.hp      = Math.floor(this.maxHp * 0.4);
+    this.alive   = true;
+    this._downed = false;
+    this._iframes = 1.5;
   }
 
   update(dt) {
@@ -142,6 +155,46 @@ export class Player {
     }
   }
 
+  _drawDowned(ctx) {
+    const t   = Date.now();
+    const bob = Math.sin(t / 350);
+
+    // Ghost body — faded, slowly pulsing
+    ctx.save();
+    ctx.globalAlpha = 0.28 + 0.14 * bob;
+    ctx.fillStyle = this.color;
+    ctx.beginPath(); ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+
+    // Expanding / contracting red warning ring
+    const ringR   = this.radius + 8 + 4 * Math.sin(t / 280);
+    const ringA   = 0.35 + 0.35 * Math.sin(t / 280);
+    ctx.strokeStyle = `rgba(255,70,70,${ringA})`;
+    ctx.lineWidth   = 3;
+    ctx.beginPath(); ctx.arc(this.x, this.y, ringR, 0, Math.PI * 2); ctx.stroke();
+
+    // "DOWNED" label
+    ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = 'rgba(255,90,90,0.9)';
+    ctx.fillText('DOWNED', this.x, this.y - this.radius - 6);
+
+    // Revive prompt — shown when an alive ally is within range
+    const REVIVE_RANGE = 70;
+    for (const other of this.level.players) {
+      if (!other.alive || other === this) continue;
+      if (Math.hypot(other.x - this.x, other.y - this.y) > REVIVE_RANGE) continue;
+      const code  = other.binding._bindings?.interact ?? '';
+      const label = code === 'KeyE' ? 'E' : code === 'KeyO' ? 'O' : '?';
+      const pa    = 0.75 + 0.2 * Math.sin(t / 180);
+      ctx.fillStyle = `rgba(255,220,80,${pa})`;
+      ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
+      ctx.fillText(`[ ${label} ]  Revive`, this.x, this.y - this.radius - 20);
+      break;
+    }
+  }
+
   _drawCrosshair(ctx) {
     const t   = this._aimTarget;
     const r   = (t.radius ?? 12) + 10;
@@ -228,6 +281,8 @@ export class Player {
   }
 
   draw(ctx) {
+    if (this._downed) { this._drawDowned(ctx); return; }
+
     // Rogue dash trail
     for (const t of this._dashTrail) {
       ctx.save();

@@ -36,6 +36,20 @@ export class GameScene extends Scene {
     }
 
     const ps = this.level.players;
+
+    // Revive interactions — each alive player checks their interact key
+    for (const reviver of ps) {
+      if (!reviver.alive) continue;
+      if (!reviver.binding.justPressed('interact')) continue;
+      for (const downed of ps) {
+        if (!downed._downed || downed === reviver) continue;
+        if (Math.hypot(downed.x - reviver.x, downed.y - reviver.y) <= 70) {
+          downed.revive();
+          break;
+        }
+      }
+    }
+
     if (ps.length > 0 && ps.every(p => !p.alive)) {
       this.game.scenes.switch(new DeathScene(this.game));
       return;
@@ -70,6 +84,32 @@ export class GameScene extends Scene {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText(this.level.name, 16, 16);
+
+    // Top-center: revive prompt for alive players near a downed ally
+    const REVIVE_RANGE = 70;
+    let revivePrompt = null;
+    for (const reviver of this.level.players) {
+      if (!reviver.alive) continue;
+      for (const downed of this.level.players) {
+        if (!downed._downed || downed === reviver) continue;
+        if (Math.hypot(downed.x - reviver.x, downed.y - reviver.y) <= REVIVE_RANGE) {
+          const code  = reviver.binding._bindings?.interact ?? '';
+          const label = code === 'KeyE' ? 'E' : code === 'KeyO' ? 'O' : '?';
+          revivePrompt = { label, name: downed.name, color: reviver.color };
+        }
+      }
+    }
+    if (revivePrompt) {
+      const pa = 0.75 + 0.2 * Math.sin(Date.now() / 180);
+      ctx.save();
+      ctx.globalAlpha = pa;
+      ctx.fillStyle = revivePrompt.color;
+      ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`[ ${revivePrompt.label} ]  Revive ${revivePrompt.name}`, W / 2, 42);
+      ctx.restore();
+    }
 
     // Bottom-center: wave prompt or status
     ctx.textAlign = 'center';

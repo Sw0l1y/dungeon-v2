@@ -4,8 +4,16 @@ export class Input {
     this._justPressed = new Set();
     this._justReleased = new Set();
     this._chars = []; // printable characters typed this frame (for text input)
+    // When Escape is pressed while the browser is in fullscreen, the browser
+    // consumes it to exit fullscreen.  We flag it here at keydown time (while
+    // document.fullscreenElement is still set) so justPressed('Escape') returns
+    // false that frame and the game doesn't also open the pause menu.
+    this._eatEscape = false;
 
     this._onKeyDown = (e) => {
+      if (e.code === 'Escape' && document.fullscreenElement) {
+        this._eatEscape = true;
+      }
       if (!this._held.has(e.code)) this._justPressed.add(e.code);
       this._held.add(e.code);
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
@@ -25,7 +33,10 @@ export class Input {
   isHeld(code) { return this._held.has(code); }
 
   /** True only on the first frame the key was pressed. */
-  justPressed(code) { return this._justPressed.has(code); }
+  justPressed(code) {
+    if (code === 'Escape' && this._eatEscape) return false;
+    return this._justPressed.has(code);
+  }
 
   /** True only on the first frame the key was released. */
   justReleased(code) { return this._justReleased.has(code); }
@@ -52,6 +63,7 @@ export class Input {
     this._justPressed.clear();
     this._justReleased.clear();
     this._chars = [];
+    this._eatEscape = false;
   }
 
   destroy() {
