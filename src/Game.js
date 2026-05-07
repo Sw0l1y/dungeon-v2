@@ -4,7 +4,7 @@ import { InputBinding } from './systems/InputBinding.js';
 import { BINDINGS } from './systems/bindings.js';
 import { TitleScene } from './scenes/TitleScene.js';
 
-export const VERSION = 'v0.8.2';
+export const VERSION = 'v0.8.3';
 
 export class Game {
   constructor(canvas) {
@@ -51,6 +51,13 @@ export class Game {
     this._lastTime = timestamp;
 
     this.scenes.update(dt);
+
+    // Map virtual 1120×630 coordinate space → physical pixel buffer.
+    // __sx/__sy are written by the ResizeObserver in main.js.
+    const sx = this.canvas.__sx ?? 1;
+    const sy = this.canvas.__sy ?? 1;
+    this.ctx.setTransform(sx, 0, 0, sy, 0, 0);
+
     this.scenes.draw(this.ctx);
     this._drawVersion(this.ctx);
     this.input.flush();

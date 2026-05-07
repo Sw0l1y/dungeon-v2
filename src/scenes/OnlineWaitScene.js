@@ -20,11 +20,12 @@ export class OnlineWaitScene extends Scene {
     // pick → hosting (connecting to server) → waiting_host (ready, showing code)
     //      → connected (peer joined) → [host presses ENTER] → launch
     // pick → joining (entering code) → hosting (connecting) → waiting_start → launch
-    this._phase = 'pick';
-    this._code  = '';
-    this._typed = '';
-    this._error = '';
-    this._net   = null;
+    this._phase        = 'pick';
+    this._code         = '';
+    this._typed        = '';
+    this._error        = '';
+    this._net          = null;
+    this._copyFeedback = 0;   // seconds remaining to show "Copied!" flash
 
     this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
@@ -77,7 +78,8 @@ export class OnlineWaitScene extends Scene {
     }
   }
 
-  update(_dt) {
+  update(dt) {
+    if (this._copyFeedback > 0) this._copyFeedback -= dt;
     const click = this._pendingClick;
     this._pendingClick = null;
     if (click) this._handleClick(click);
@@ -98,10 +100,26 @@ export class OnlineWaitScene extends Scene {
       if (this._hit({ x: W / 2 - 100, y: H / 2 + 60, w: 200, h: 48 }, pt)) this._hostLaunch();
     }
 
+    // Copy code button (waiting_host phase)
+    if (this._phase === 'waiting_host') {
+      const btn = this._copyCodeBtn(W, H);
+      if (this._hit(btn, pt)) {
+        navigator.clipboard?.writeText(this._code).catch(() => {});
+        this._copyFeedback = 1.6;
+      }
+    }
+
     // Back button — all non-pick phases except joining (ESC only there)
     if (this._phase !== 'pick' && this._phase !== 'joining') {
       if (this._hit({ x: W / 2 - 70, y: H - 70, w: 140, h: 36 }, pt)) this._reset();
     }
+  }
+
+  // Returns the bounding rect for the copy-code button
+  _copyCodeBtn(W, H) {
+    const boxH = 80;
+    const by   = H / 2 - boxH / 2 - 10;
+    return { x: W / 2 - 70, y: by + boxH + 50, w: 140, h: 34 };
   }
 
   _hit({ x, y, w, h }, pt) {
@@ -284,7 +302,25 @@ export class OnlineWaitScene extends Scene {
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('Share this code with the other device', W / 2, by + boxH + 28);
+    ctx.fillText('Share this code with the other device', W / 2, by + boxH + 24);
+
+    // Copy code button
+    const cpBtn = this._copyCodeBtn(W, H);
+    const copied = this._copyFeedback > 0;
+    const cpHov  = !copied && this._hit(cpBtn, this._mouse);
+    ctx.fillStyle = copied
+      ? 'rgba(100,255,140,0.18)'
+      : cpHov ? 'rgba(140,243,255,0.18)' : 'rgba(140,243,255,0.07)';
+    ctx.beginPath(); ctx.roundRect(cpBtn.x, cpBtn.y, cpBtn.w, cpBtn.h, 7); ctx.fill();
+    ctx.strokeStyle = copied
+      ? 'rgba(100,255,140,0.55)'
+      : cpHov ? '#8cf3ff' : 'rgba(140,243,255,0.3)';
+    ctx.lineWidth = cpHov || copied ? 1.5 : 1;
+    ctx.beginPath(); ctx.roundRect(cpBtn.x, cpBtn.y, cpBtn.w, cpBtn.h, 7); ctx.stroke();
+    ctx.fillStyle = copied ? 'rgba(100,255,160,0.9)' : cpHov ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
+    ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(copied ? '✓ Copied!' : 'COPY CODE', cpBtn.x + cpBtn.w / 2, cpBtn.y + cpBtn.h / 2);
   }
 
   _drawJoining(ctx, W, H, t) {
