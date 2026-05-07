@@ -1,5 +1,5 @@
-import { Scene } from './Scene.js';
-import { LobbyScene } from './LobbyScene.js';
+import { Scene            } from './Scene.js';
+import { ModeSelectScene } from './ModeSelectScene.js';
 
 export class TitleScene extends Scene {
   onEnter() {
@@ -8,7 +8,7 @@ export class TitleScene extends Scene {
 
   update(_dt) {
     if (this.game.input.justPressed('Enter') || this.game.input.justPressed('Space')) {
-      this.game.scenes.switch(new LobbyScene(this.game));
+      this.game.scenes.switch(new ModeSelectScene(this.game));
     }
   }
 
