@@ -159,15 +159,15 @@ export class Ranger {
   }
 
   draw(ctx) {
-    // Glow ring — purple
-    ctx.strokeStyle = 'rgba(152,85,247,0.4)';
+    // Glow ring — orange
+    ctx.strokeStyle = 'rgba(255,130,0,0.4)';
     ctx.lineWidth   = 4;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius + 5, 0, Math.PI * 2);
     ctx.stroke();
 
     // Body
-    ctx.fillStyle = '#9855f7';
+    ctx.fillStyle = '#ff8c00';
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();

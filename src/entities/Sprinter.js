@@ -126,15 +126,15 @@ export class Sprinter {
   }
 
   draw(ctx) {
-    // Glow ring — bright red, smaller
-    ctx.strokeStyle = 'rgba(255,90,90,0.4)';
+    // Glow ring — yellow
+    ctx.strokeStyle = 'rgba(255,220,0,0.4)';
     ctx.lineWidth   = 3;
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius + 3, 0, Math.PI * 2);
     ctx.stroke();
 
     // Body
-    ctx.fillStyle = '#ff5a5a';
+    ctx.fillStyle = '#ffe033';
     ctx.beginPath();
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
