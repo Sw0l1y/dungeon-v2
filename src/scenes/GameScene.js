@@ -22,7 +22,7 @@ export class GameScene extends Scene {
 
   update(dt) {
     // Pause
-    if (this.game.input.justPressed('Escape')) {
+    if (this.game.input.justPressed('Backquote')) {
       this.game.scenes.push(new PauseScene(this.game, this));
       return;
     }

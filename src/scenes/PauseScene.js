@@ -80,7 +80,7 @@ export class PauseScene extends Scene {
   // ── update ────────────────────────────────────────────────────────────────
 
   update(_dt) {
-    if (this.game.input.justPressed('Escape')) {
+    if (this.game.input.justPressed('Backquote')) {
       this.game.scenes.pop();
       return;
     }
@@ -194,7 +194,7 @@ export class PauseScene extends Scene {
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font = '11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('Esc to resume', p.x + p.w / 2, p.y + p.h - 4);
+    ctx.fillText('`  to resume', p.x + p.w / 2, p.y + p.h - 4);
   }
 
   // ── stats tab ─────────────────────────────────────────────────────────────
