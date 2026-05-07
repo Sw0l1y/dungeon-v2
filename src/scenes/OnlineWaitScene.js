@@ -17,9 +17,12 @@ export class OnlineWaitScene extends Scene {
   // ── Lifecycle ──────────────────────────────────────────────────────────────
 
   onEnter() {
-    this._phase = 'pick';       // pick | hosting | joining | connected | waiting_start | error
-    this._code  = '';           // active room code
-    this._typed = '';           // chars entered on join screen
+    // pick → hosting (connecting to server) → waiting_host (ready, showing code)
+    //      → connected (peer joined) → [host presses ENTER] → launch
+    // pick → joining (entering code) → hosting (connecting) → waiting_start → launch
+    this._phase = 'pick';
+    this._code  = '';
+    this._typed = '';
     this._error = '';
     this._net   = null;
 
@@ -49,7 +52,6 @@ export class OnlineWaitScene extends Scene {
     this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
     this.game.canvas.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('keydown', this._onKeyDown);
-    // If scene exits without launching (e.g. back navigation), close net
     this._net?.close();
     this._net = null;
   }
@@ -57,15 +59,12 @@ export class OnlineWaitScene extends Scene {
   // ── Input ──────────────────────────────────────────────────────────────────
 
   _handleKey(ev) {
-    if (ev.key === 'Escape') {
-      if (this._phase !== 'pick') { this._reset(); return; }
+    if (ev.key === 'Escape' && this._phase !== 'pick') {
+      this._reset(); return;
     }
 
     if (this._phase === 'joining') {
-      if (ev.key === 'Backspace') {
-        this._typed = this._typed.slice(0, -1);
-        return;
-      }
+      if (ev.key === 'Backspace') { this._typed = this._typed.slice(0, -1); return; }
       const ch = ev.key.toUpperCase();
       if (CHARSET.includes(ch) && this._typed.length < 4) {
         this._typed += ch;
@@ -81,8 +80,7 @@ export class OnlineWaitScene extends Scene {
   update(_dt) {
     const click = this._pendingClick;
     this._pendingClick = null;
-    if (!click) return;
-    this._handleClick(click);
+    if (click) this._handleClick(click);
   }
 
   _handleClick(pt) {
@@ -90,31 +88,19 @@ export class OnlineWaitScene extends Scene {
     const H = this.game.canvas.height;
 
     if (this._phase === 'pick') {
-      // HOST button
-      if (this._hit({ x: W / 2 - 210, y: H / 2 - 40, w: 190, h: 80 }, pt)) {
-        this._startHost();
-      }
-      // JOIN button
-      if (this._hit({ x: W / 2 + 20, y: H / 2 - 40, w: 190, h: 80 }, pt)) {
-        this._phase = 'joining';
-        this._typed = '';
+      if (this._hit({ x: W / 2 - 210, y: H / 2 - 40, w: 190, h: 80 }, pt)) this._startHost();
+      if (this._hit({ x: W / 2 + 20,  y: H / 2 - 40, w: 190, h: 80 }, pt)) {
+        this._phase = 'joining'; this._typed = '';
       }
     }
 
-    if (this._phase === 'connected') {
-      // START button (host only)
-      if (this._net?.role === 'host') {
-        if (this._hit({ x: W / 2 - 100, y: H / 2 + 60, w: 200, h: 48 }, pt)) {
-          this._hostLaunch();
-        }
-      }
+    if (this._phase === 'connected' && this._net?.role === 'host') {
+      if (this._hit({ x: W / 2 - 100, y: H / 2 + 60, w: 200, h: 48 }, pt)) this._hostLaunch();
     }
 
-    if (this._phase === 'error' || (this._phase !== 'pick' && this._phase !== 'joining')) {
-      // Back button (bottom area)
-      if (this._hit({ x: W / 2 - 70, y: H - 70, w: 140, h: 36 }, pt)) {
-        this._reset();
-      }
+    // Back button — all non-pick phases except joining (ESC only there)
+    if (this._phase !== 'pick' && this._phase !== 'joining') {
+      if (this._hit({ x: W / 2 - 70, y: H - 70, w: 140, h: 36 }, pt)) this._reset();
     }
   }
 
@@ -126,28 +112,26 @@ export class OnlineWaitScene extends Scene {
 
   _reset() {
     this._net?.close();
-    this._net   = null;
+    this._net = null;
     this._phase = 'pick';
-    this._typed = '';
-    this._code  = '';
-    this._error = '';
+    this._typed = this._code = this._error = '';
   }
 
   _startHost() {
     this._code  = makeCode();
-    this._phase = 'hosting';
+    this._phase = 'hosting';   // "Connecting to server..."
     this._net   = new NetSession();
-    this._net.onWaiting      = () => { /* already showing code */ };
+    this._net.onWaiting      = () => { this._phase = 'waiting_host'; };   // server confirmed — now show code
     this._net.onConnected    = () => { this._phase = 'connected'; };
     this._net.onMessage      = (d) => { if (d.t === 'start') this._launch('client'); };
     this._net.onDisconnected = () => { this._error = 'Player disconnected'; this._phase = 'error'; };
-    this._net.onError        = (m) => { this._error = m;                     this._phase = 'error'; };
+    this._net.onError        = (m) => { this._error = m;                    this._phase = 'error'; };
     this._net.host(this._code);
   }
 
   _startJoin(code) {
     this._code  = code;
-    this._phase = 'hosting';   // show spinner while connecting
+    this._phase = 'hosting';   // "Connecting to server..."
     this._net   = new NetSession();
     this._net.onConnected    = () => { this._phase = 'waiting_start'; };
     this._net.onMessage      = (d) => { if (d.t === 'start') this._launch('client'); };
@@ -157,32 +141,39 @@ export class OnlineWaitScene extends Scene {
   }
 
   _hostLaunch() {
-    // Host sends start signal, then launches
     this._net?.send({ t: 'start' });
     this._launch('host');
   }
 
   _launch(role) {
     const net = this._net;
-    this._net = null;   // prevent onExit from closing it
+    this._net = null;  // prevent onExit from closing it
 
-    const rb = new RemoteBinding();
+    // Two remote bindings — one per remote player
+    const rb1 = new RemoteBinding();
+    const rb2 = new RemoteBinding();
 
+    // Players 0-1 are the host's two local players.
+    // Players 2-3 are the client's two local players.
     if (role === 'host') {
       this.game.state.players = [
-        { name: 'Player 1', color: '#8cf3ff', binding: this.game.bindings.player1, classId: 'sword' },
-        { name: 'Player 2', color: '#ff8c42', binding: rb,                          classId: 'sword' },
+        { name: 'P1', color: '#8cf3ff', binding: this.game.bindings.player1, classId: 'sword' },
+        { name: 'P2', color: '#ff8c42', binding: this.game.bindings.player2, classId: 'sword' },
+        { name: 'P3', color: '#a8ff78', binding: rb1,                        classId: 'sword' },
+        { name: 'P4', color: '#ff6b9d', binding: rb2,                        classId: 'sword' },
       ];
     } else {
       this.game.state.players = [
-        { name: 'Player 1', color: '#8cf3ff', binding: rb,                          classId: 'sword' },
-        { name: 'Player 2', color: '#ff8c42', binding: this.game.bindings.player1,  classId: 'sword' },
+        { name: 'P1', color: '#8cf3ff', binding: rb1,                         classId: 'sword' },
+        { name: 'P2', color: '#ff8c42', binding: rb2,                         classId: 'sword' },
+        { name: 'P3', color: '#a8ff78', binding: this.game.bindings.player1,  classId: 'sword' },
+        { name: 'P4', color: '#ff6b9d', binding: this.game.bindings.player2,  classId: 'sword' },
       ];
     }
 
-    this.game.state.netSession     = net;
-    this.game.state.netRole        = role;
-    this.game.state.remoteBinding  = rb;
+    this.game.state.netSession      = net;
+    this.game.state.netRole         = role;
+    this.game.state.remoteBindings  = [rb1, rb2];
 
     this.game.scenes.switch(new GameScene(this.game));
   }
@@ -194,7 +185,6 @@ export class OnlineWaitScene extends Scene {
     const t = Date.now();
     ctx.clearRect(0, 0, W, H);
 
-    // Title
     ctx.fillStyle    = '#8cf3ff';
     ctx.font         = 'bold 42px "Trebuchet MS", sans-serif';
     ctx.textAlign    = 'center';
@@ -202,15 +192,15 @@ export class OnlineWaitScene extends Scene {
     ctx.fillText('ONLINE PLAY', W / 2, 66);
 
     switch (this._phase) {
-      case 'pick':      this._drawPick(ctx, W, H, t);        break;
-      case 'hosting':   this._drawHosting(ctx, W, H, t);     break;
-      case 'joining':   this._drawJoining(ctx, W, H, t);     break;
-      case 'connected': this._drawConnected(ctx, W, H, t);   break;
-      case 'waiting_start': this._drawWaitStart(ctx, W, H, t); break;
-      case 'error':     this._drawError(ctx, W, H);           break;
+      case 'pick':         this._drawPick(ctx, W, H);            break;
+      case 'hosting':      this._drawConnecting(ctx, W, H, t);   break;
+      case 'waiting_host': this._drawWaitingHost(ctx, W, H, t);  break;
+      case 'joining':      this._drawJoining(ctx, W, H, t);      break;
+      case 'connected':    this._drawConnected(ctx, W, H, t);    break;
+      case 'waiting_start':this._drawWaitStart(ctx, W, H, t);    break;
+      case 'error':        this._drawError(ctx, W, H);           break;
     }
 
-    // Back hint (except on pick + joining)
     if (this._phase !== 'pick' && this._phase !== 'joining') {
       this._drawBackBtn(ctx, W, H);
     }
@@ -218,8 +208,8 @@ export class OnlineWaitScene extends Scene {
 
   _drawPick(ctx, W, H) {
     const btns = [
-      { x: W / 2 - 210, label: 'HOST',  sub: 'Create a room' },
-      { x: W / 2 + 20,  label: 'JOIN',  sub: 'Enter room code' },
+      { x: W / 2 - 210, label: 'HOST', sub: 'Create a room' },
+      { x: W / 2 + 20,  label: 'JOIN', sub: 'Enter room code' },
     ];
     for (const b of btns) {
       const r = { x: b.x, y: H / 2 - 40, w: 190, h: 80 };
@@ -229,7 +219,6 @@ export class OnlineWaitScene extends Scene {
       ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.25)';
       ctx.lineWidth = hov ? 2 : 1.5;
       ctx.beginPath(); ctx.roundRect(r.x, r.y, r.w, r.h, 12); ctx.stroke();
-
       ctx.fillStyle = hov ? '#8cf3ff' : 'rgba(255,255,255,0.85)';
       ctx.font = 'bold 22px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -238,32 +227,62 @@ export class OnlineWaitScene extends Scene {
       ctx.font = '13px "Trebuchet MS", sans-serif';
       ctx.fillText(b.sub, r.x + r.w / 2, r.y + r.h / 2 + 14);
     }
-
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('2 players per device  ·  4 players total', W / 2, H / 2 + 68);
+    ctx.fillStyle = 'rgba(255,255,255,0.15)';
+    ctx.font = '13px "Trebuchet MS", sans-serif';
+    ctx.textBaseline = 'bottom';
     ctx.fillText('ESC  ·  back', W / 2, H - 22);
   }
 
-  _drawHosting(ctx, W, H, t) {
-    // Spinner
+  // Briefly shown while the WebSocket is connecting (~<1s typically)
+  _drawConnecting(ctx, W, H, t) {
     const spin = ((t / 1000) * Math.PI * 2) % (Math.PI * 2);
-    ctx.strokeStyle = 'rgba(140,243,255,0.7)';
+    ctx.strokeStyle = 'rgba(140,243,255,0.6)';
     ctx.lineWidth   = 3;
     ctx.beginPath();
-    ctx.arc(W / 2, H / 2 - 50, 22, spin, spin + Math.PI * 1.4);
+    ctx.arc(W / 2, H / 2 - 40, 20, spin, spin + Math.PI * 1.4);
     ctx.stroke();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.font = '18px "Trebuchet MS", sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '17px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('Connecting...', W / 2, H / 2 + 10);
+    ctx.fillText('Connecting to server...', W / 2, H / 2 + 10);
+  }
 
-    if (this._code) {
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.font = '14px "Trebuchet MS", sans-serif';
-      ctx.fillText('Room  ' + this._code, W / 2, H / 2 + 46);
+  // Shown once the signaling server confirms our host role — show the room code
+  _drawWaitingHost(ctx, W, H, t) {
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '16px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Waiting for player...', W / 2, H / 2 - 80);
+
+    // Big code display
+    const code = this._code;
+    const boxW = 64, boxH = 80, gap = 12;
+    const totalW = boxW * 4 + gap * 3;
+    const bx = W / 2 - totalW / 2;
+    const by = H / 2 - boxH / 2 - 10;
+    const pulse = 0.18 + 0.08 * Math.sin(t / 400);
+
+    for (let i = 0; i < 4; i++) {
+      const rx = bx + i * (boxW + gap);
+      ctx.fillStyle = `rgba(140,243,255,${pulse})`;
+      ctx.beginPath(); ctx.roundRect(rx, by, boxW, boxH, 10); ctx.fill();
+      ctx.strokeStyle = 'rgba(140,243,255,0.5)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(rx, by, boxW, boxH, 10); ctx.stroke();
+      ctx.fillStyle = '#8cf3ff';
+      ctx.font = 'bold 36px "Trebuchet MS", monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(code[i] ?? '', rx + boxW / 2, by + boxH / 2);
     }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '13px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Share this code with the other device', W / 2, by + boxH + 28);
   }
 
   _drawJoining(ctx, W, H, t) {
@@ -272,7 +291,6 @@ export class OnlineWaitScene extends Scene {
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Enter room code', W / 2, H / 2 - 70);
 
-    // Four boxes
     const boxW = 58, boxH = 72, gap = 16;
     const totalW = boxW * 4 + gap * 3;
     const bx = W / 2 - totalW / 2;
@@ -283,22 +301,15 @@ export class OnlineWaitScene extends Scene {
       const filled = i < this._typed.length;
       const active = i === this._typed.length;
       const cursor = active && Math.floor(t / 500) % 2 === 0;
-
-      ctx.fillStyle = filled
-        ? 'rgba(140,243,255,0.12)'
-        : active ? 'rgba(140,243,255,0.06)' : 'rgba(255,255,255,0.04)';
+      ctx.fillStyle = filled ? 'rgba(140,243,255,0.12)' : active ? 'rgba(140,243,255,0.06)' : 'rgba(255,255,255,0.04)';
       ctx.beginPath(); ctx.roundRect(rx, by, boxW, boxH, 8); ctx.fill();
       ctx.strokeStyle = active ? '#8cf3ff' : filled ? 'rgba(140,243,255,0.35)' : 'rgba(255,255,255,0.12)';
       ctx.lineWidth = active ? 2 : 1;
       ctx.beginPath(); ctx.roundRect(rx, by, boxW, boxH, 8); ctx.stroke();
-
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 32px "Trebuchet MS", monospace';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(
-        filled ? this._typed[i] : (cursor ? '|' : ''),
-        rx + boxW / 2, by + boxH / 2,
-      );
+      ctx.fillText(filled ? this._typed[i] : (cursor ? '|' : ''), rx + boxW / 2, by + boxH / 2);
     }
 
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
@@ -308,19 +319,17 @@ export class OnlineWaitScene extends Scene {
   }
 
   _drawConnected(ctx, W, H, t) {
-    // Pulsing "Connected!" indicator
     const a = 0.7 + 0.25 * Math.sin(t / 220);
     ctx.fillStyle = `rgba(140,243,255,${a})`;
     ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('● Player connected', W / 2, H / 2 - 30);
+    ctx.fillText('● Player connected', W / 2, H / 2 - 38);
 
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.font = '15px "Trebuchet MS", sans-serif';
-    ctx.fillText('Room code  ' + this._code, W / 2, H / 2 + 4);
+    ctx.fillText('Room  ' + this._code, W / 2, H / 2 - 8);
 
-    // START button
-    const btn = { x: W / 2 - 100, y: H / 2 + 50, w: 200, h: 48 };
+    const btn = { x: W / 2 - 100, y: H / 2 + 40, w: 200, h: 48 };
     const hov = this._hit(btn, this._mouse);
     ctx.fillStyle = hov ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)';
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.fill();
@@ -343,7 +352,6 @@ export class OnlineWaitScene extends Scene {
     ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('● Connected', W / 2, H / 2 - 20);
-
     ctx.fillStyle = 'rgba(255,255,255,0.45)';
     ctx.font = '15px "Trebuchet MS", sans-serif';
     ctx.fillText('Waiting for host to start...', W / 2, H / 2 + 20);
@@ -354,7 +362,6 @@ export class OnlineWaitScene extends Scene {
     ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('Connection error', W / 2, H / 2 - 20);
-
     ctx.fillStyle = 'rgba(255,150,150,0.7)';
     ctx.font = '14px "Trebuchet MS", sans-serif';
     ctx.fillText(this._error, W / 2, H / 2 + 14);

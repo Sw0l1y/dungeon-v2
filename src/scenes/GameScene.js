@@ -19,9 +19,9 @@ export class GameScene extends Scene {
     this._portalSpawned = false;
 
     // ── Network state (null = local play) ─────────────────────────────────────
-    this._net           = this.game.state.netSession   ?? null;
-    this._netRole       = this.game.state.netRole      ?? null; // 'host'|'client'|null
-    this._remoteBinding = this.game.state.remoteBinding ?? null;
+    this._net            = this.game.state.netSession    ?? null;
+    this._netRole        = this.game.state.netRole       ?? null; // 'host'|'client'|null
+    this._remoteBindings = this.game.state.remoteBindings ?? [];  // [rb1, rb2]
 
     // Ghost enemies shown on client (map of netId → {typeIdx, x, y})
     this._ghosts     = new Map();
@@ -166,8 +166,8 @@ export class GameScene extends Scene {
           this._sendTimer = 0;
           this._net.send(this._buildInputPacket());
         }
-        // Flush remote binding (clears justPressed after level.update reads it)
-        this._remoteBinding?.flush();
+        // Flush remote bindings (clears justPressed after level.update reads them)
+        for (const rb of this._remoteBindings) rb.flush();
       }
     }
   }
@@ -415,25 +415,25 @@ export class GameScene extends Scene {
     };
   }
 
-  /** Build input packet (client → host, 30 hz). */
+  /** Build input packet (client → host, 30 hz).
+   *  Client's local players are always at indices 2 and 3. */
   _buildInputPacket() {
-    // The client's local player is always index 1
-    const pl = this.level.players[1];
-    if (!pl) return { t: 'in', x: 0, y: 0, ak: 0, it: 0 };
-    const { x, y } = pl.binding.axes;
-    return {
-      t:  'in',
-      x:  x,
-      y:  y,
-      ak: pl.binding.isHeld('attack')   ? 1 : 0,
-      it: pl.binding.isHeld('interact') ? 1 : 0,
+    const snap = (pl) => {
+      if (!pl) return { x: 0, y: 0, ak: 0, it: 0 };
+      const { x, y } = pl.binding.axes;
+      return { x, y, ak: pl.binding.isHeld('attack') ? 1 : 0, it: pl.binding.isHeld('interact') ? 1 : 0 };
     };
+    return { t: 'in', p: [snap(this.level.players[2]), snap(this.level.players[3])] };
   }
 
   /** Handle an incoming network message. */
   _onNetMsg(data) {
     if (this._netRole === 'host') {
-      if (data.t === 'in') this._remoteBinding?.applyRemote(data);
+      // Client sends { t:'in', p:[input_for_p2, input_for_p3] }
+      if (data.t === 'in' && data.p) {
+        this._remoteBindings[0]?.applyRemote(data.p[0] ?? {});
+        this._remoteBindings[1]?.applyRemote(data.p[1] ?? {});
+      }
     } else {
       if (data.t === 'gs') this._applyHostState(data);
     }
@@ -449,16 +449,16 @@ export class GameScene extends Scene {
         const pl = ps[i];
         if (!pl) return;
 
-        // Player 0 = host's player: snap position to authoritative value
-        // Player 1 = our own player: accept HP / downed state from host
-        if (i === 0) {
+        // Players 0 & 1 = host's local players: snap positions from host state
+        // Players 2 & 3 = client's own players: accept HP / downed only
+        if (i < 2) {
           pl.x = pd.x;
           pl.y = pd.y;
           pl._facingX = pd.fx ?? pl._facingX;
           pl._facingY = pd.fy ?? pl._facingY;
         }
 
-        // Authoritative HP + downed state for both players
+        // Authoritative HP + downed state for all four players
         pl.hp = Math.max(0, pd.hp);
         if (pd.d && !pl._downed) { pl._downed = true;  pl.alive = false; }
         if (!pd.d && pl._downed) { pl._downed = false; pl.alive = true;  }

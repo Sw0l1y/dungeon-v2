@@ -37,14 +37,23 @@ export class Level1 extends Level {
     const configs = this.game.state.players ?? [
       { name: 'Player 1', color: '#8cf3ff', binding: this.game.bindings.player1 },
     ];
-    // Spawn at map centre so players emerge from the intro portal
+    // Spawn at map centre so players emerge from the intro portal.
+    // Offsets spread players out so they don't stack: 2-player = side-by-side,
+    // 3-4 player = 2×2 diamond/grid.
     const cx = Math.floor(MAP[0].length / 2) * TILE + TILE / 2;
     const cy = Math.floor(MAP.length    / 2) * TILE + TILE / 2;
+    const OFFSETS = [
+      [  0,   0],          // 1-player: dead centre
+      [-14,   0], [14, 0], // 2-player: side-by-side
+    ];
+    const OFFSETS4 = [[-21, -14], [21, -14], [-21, 14], [21, 14]];
+    const n = configs.length;
     configs.forEach((cfg, i) => {
-      const offset = configs.length > 1 ? (i === 0 ? -14 : 14) : 0;
+      const [ox, oy] = n >= 3 ? (OFFSETS4[i] ?? [0, 0])
+                               : (OFFSETS[n === 1 ? 0 : i + 1] ?? [0, 0]);
       this.addPlayer(new Player(
         this.game, this,
-        cx + offset, cy,
+        cx + ox, cy + oy,
         cfg.binding, cfg.name, cfg.color, cfg.classId ?? 'sword',
       ));
     });
