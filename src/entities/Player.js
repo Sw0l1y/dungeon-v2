@@ -100,7 +100,7 @@ export class Player {
     for (const t of this._dashTrail) t.a -= dt * 6;
     this._dashTrail = this._dashTrail.filter(t => t.a > 0);
 
-    if (this.binding.justPressed('actionA') && this._atkCooldown === 0) {
+    if (this.binding.justPressed('attack') && this._atkCooldown === 0) {
       this._attack();
     }
   }

@@ -6,19 +6,19 @@ const CLASSES = [
     id:   'sword',
     name: 'Sword',
     lines: ['Wide melee swing', 'High damage, short range'],
-    key:  'Q  /  U',
+    key:  'Space  /  Enter',
   },
   {
     id:   'archer',
     name: 'Archer',
     lines: ['Fast projectile', 'Auto-aims nearest enemy'],
-    key:  'Q  /  U',
+    key:  'Space  /  Enter',
   },
   {
     id:   'rogue',
     name: 'Rogue',
     lines: ['Dash through enemies', 'Invincible during dash'],
-    key:  'Q  /  U',
+    key:  'Space  /  Enter',
   },
 ];
 
