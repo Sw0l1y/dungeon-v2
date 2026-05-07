@@ -20,6 +20,12 @@ export class Portal {
     this._innerAngle = 0;   // inner arms rotate CW (counter)
     this._coreAngle  = 0;   // star-field inside the void
 
+    // Closing sequence — triggered once all death fragments are absorbed
+    this._age        = 0;
+    this._closing    = false;
+    this._closeT     = 0;
+    this._closeScale = 1;   // 1 → 0 during close
+
     this._particles = [];
     this._initParticles();
   }
@@ -59,9 +65,27 @@ export class Portal {
     this._armAngle   += 0.55 * dt;
     this._innerAngle -= 0.95 * dt;
     this._coreAngle  += 0.25 * dt;
+    this._age        += dt;
+
+    // ── Closing sequence — shrink portal once all death fragments are absorbed ──
+    const CLOSE_DUR = 1.4;
+    if (!this._closing && this._age > 2 && this.level._soulDebris.length === 0) {
+      this._closing = true;
+      this._closeT  = 0;
+    }
+    if (this._closing) {
+      this._closeT     += dt;
+      const p           = Math.min(1, this._closeT / CLOSE_DUR);
+      this._closeScale  = 1 - p * p * p;   // easeInCubic
+      if (this._closeT >= CLOSE_DUR) {
+        this.alive = false;
+        this.level.removeEntity(this);
+        return;
+      }
+    }
 
     // ── Ambient particles ────────────────────────────────────────────────────
-    for (let i = 0; i < this._particles.length; i++) {
+    for (let i = this._particles.length - 1; i >= 0; i--) {
       const p  = this._particles[i];
       const dx = this.x - p.x;
       const dy = this.y - p.y;
@@ -79,8 +103,12 @@ export class Portal {
       p.y += (dy / dist) * radialSpeed + ty * tangentialSpeed;
 
       // Absorbed when reaching the void centre
-      if (dist < PORTAL_RADIUS * 0.45) {
-        this._particles[i] = this._makeParticle(false);
+      if (dist < PORTAL_RADIUS * this._closeScale * 0.45) {
+        if (this._closing) {
+          this._particles.splice(i, 1);  // drain without respawning during close
+        } else {
+          this._particles[i] = this._makeParticle(false);
+        }
       }
     }
 
@@ -123,9 +151,11 @@ export class Portal {
   // ── Draw ───────────────────────────────────────────────────────────────────
 
   draw(ctx) {
+    if (!this.alive) return;
     const t = Date.now();
     const { x, y } = this;
-    const R = PORTAL_RADIUS;
+    const R = PORTAL_RADIUS * this._closeScale;
+    if (R < 0.5) return;
 
     // ── 1. Ambient map particles (drawn first, in world space) ───────────────
     ctx.save();

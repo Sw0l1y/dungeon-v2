@@ -97,7 +97,7 @@ export class Level {
 
       const angle  = (i / count) * Math.PI * 2 + Math.random() * 0.85;
       const speed  = 70 + Math.random() * 170;
-      const life   = 20 + Math.random() * 14;
+      const life   = 1;   // never decrements — only portal absorption clears these
       const nSides = 3 + Math.floor(Math.random() * 3);   // 3–5 sides
       const baseR  = 3.5 + Math.random() * 5.5;           // radius 3.5–9 px
 
@@ -122,8 +122,7 @@ export class Level {
         color,
         dark,
         bright,
-        life,
-        maxLife: life,
+        life,   // stays at 1 forever; portal sets to 0 on absorption
       });
     }
   }
@@ -166,9 +165,9 @@ export class Level {
         d.spin += (Math.random() - 0.5) * 4;
       }
 
-      d.vx   *= velFric;
-      d.vy   *= velFric;
-      d.life -= dt;
+      d.vx *= velFric;
+      d.vy *= velFric;
+      // NOTE: d.life is NOT decremented — fragments persist until portal absorbs them
     }
     this._soulDebris = this._soulDebris.filter(d => d.life > 0);
   }
@@ -185,9 +184,7 @@ export class Level {
 
   _drawSoulDebris(ctx) {
     for (const d of this._soulDebris) {
-      // Fade only in last 2 s
-      const alpha = Math.min(1, d.life / 2) * 0.94;
-      if (alpha < 0.02) continue;
+      const alpha = 0.94;  // solid — no fade; portal absorption removes them
 
       ctx.save();
       ctx.globalAlpha = alpha;
