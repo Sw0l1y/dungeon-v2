@@ -98,6 +98,7 @@ export class LobbyScene extends Scene {
     // V always toggles P2
     if (input.justPressed('KeyV')) {
       this._slots[1].active = !this._slots[1].active;
+      if (this._slots[1].active) this._resolveColorConflict(1);
       if (!this._slots[1].active && this._editingSlot === 1) this._editingSlot = null;
     }
 
@@ -133,6 +134,7 @@ export class LobbyScene extends Scene {
     // Add P2 button (inactive card)
     if (!this._slots[1].active && this._hit(this._addP2Btn(), pt)) {
       this._slots[1].active = true;
+      this._resolveColorConflict(1);
       return;
     }
 
@@ -141,8 +143,8 @@ export class LobbyScene extends Scene {
       if (!this._slots[i].active) continue;
 
       if (this._hit(this._nameField(i), pt))  { this._editingSlot = i; return; }
-      if (this._hit(this._colorLeft(i), pt))  { this._slots[i].colorIdx = (this._slots[i].colorIdx - 1 + COLORS.length) % COLORS.length; return; }
-      if (this._hit(this._colorRight(i), pt)) { this._slots[i].colorIdx = (this._slots[i].colorIdx + 1) % COLORS.length; return; }
+      if (this._hit(this._colorLeft(i), pt))  { this._cycleColor(i, -1); return; }
+      if (this._hit(this._colorRight(i), pt)) { this._cycleColor(i, +1); return; }
 
       if (i === 1 && this._hit(this._removeP2Btn(), pt)) {
         this._slots[1].active = false;
@@ -153,6 +155,28 @@ export class LobbyScene extends Scene {
 
     // Click outside any field → stop editing
     this._editingSlot = null;
+  }
+
+  _takenColorIdxs(forSlotIdx) {
+    const taken = new Set();
+    this._slots.forEach((s, i) => { if (i !== forSlotIdx && s.active) taken.add(s.colorIdx); });
+    return taken;
+  }
+
+  _cycleColor(slotIdx, dir) {
+    const taken = this._takenColorIdxs(slotIdx);
+    let next    = (this._slots[slotIdx].colorIdx + dir + COLORS.length) % COLORS.length;
+    let tries   = COLORS.length;
+    while (taken.has(next) && tries-- > 0) next = (next + dir + COLORS.length) % COLORS.length;
+    this._slots[slotIdx].colorIdx = next;
+  }
+
+  _resolveColorConflict(slotIdx) {
+    const taken = this._takenColorIdxs(slotIdx);
+    if (!taken.has(this._slots[slotIdx].colorIdx)) return;
+    for (let i = 0; i < COLORS.length; i++) {
+      if (!taken.has(i)) { this._slots[slotIdx].colorIdx = i; return; }
+    }
   }
 
   _startGame() {
@@ -304,6 +328,16 @@ export class LobbyScene extends Scene {
     ctx.font = '11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(COLOR_NAMES[this._slots[i].colorIdx], sx + CARD_W / 2, cY + cH + 10);
+
+    // TAKEN overlay if this color is claimed by another active player
+    if (this._takenColorIdxs(i).has(this._slots[i].colorIdx)) {
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath(); ctx.roundRect(sx + 20, cY, CARD_W - 40, cH, 6); ctx.fill();
+      ctx.fillStyle = 'rgba(255,80,80,0.65)';
+      ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('TAKEN', sx + CARD_W / 2, cY + cH / 2);
+    }
 
     // Arrow buttons
     ctx.font = 'bold 22px monospace';

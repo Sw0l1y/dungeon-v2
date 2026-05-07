@@ -47,8 +47,8 @@ export class Player {
     if (!this.alive) return;
     const { x: ax, y: ay } = this.binding.axes;
 
-    if (this.classId === 'archer') {
-      // Archer passively faces the nearest enemy
+    if (this.classId === 'archer' || this.classId === 'rogue') {
+      // Auto-aim: face the most threatening enemy
       const target = this._nearestEnemy();
       if (target) {
         const dx = target.x - this.x, dy = target.y - this.y;
@@ -121,6 +121,7 @@ export class Player {
       this._atkCooldown = 0.75;
       this._dashing     = true;
       this._dashTimer   = 0.13;
+      // _facingX/Y already updated this frame toward the target
       this._dashDirX    = this._facingX;
       this._dashDirY    = this._facingY;
       this._iframes     = 0.18; // invincible through the full dash + tiny buffer
@@ -139,6 +140,27 @@ export class Player {
         new Projectile(this.level, this.x, this.y, dirX * speed, dirY * speed, this)
       );
     }
+  }
+
+  _drawCrosshair(ctx) {
+    const t   = this._aimTarget;
+    const r   = (t.radius ?? 12) + 10;
+    const arm = 9;
+    const pulse = 0.65 + 0.2 * Math.sin(Date.now() / 220);
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth   = 1.5;
+    ctx.globalAlpha = pulse;
+    // Ring around target
+    ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.stroke();
+    // 4 tick marks radiating outward
+    ctx.beginPath();
+    ctx.moveTo(t.x - r - arm, t.y); ctx.lineTo(t.x - r, t.y);
+    ctx.moveTo(t.x + r,       t.y); ctx.lineTo(t.x + r + arm, t.y);
+    ctx.moveTo(t.x, t.y - r - arm); ctx.lineTo(t.x, t.y - r);
+    ctx.moveTo(t.x, t.y + r);       ctx.lineTo(t.x, t.y + r + arm);
+    ctx.stroke();
+    ctx.restore();
   }
 
   _nearestEnemy() {
@@ -241,6 +263,11 @@ export class Player {
     ctx.fill();
 
     ctx.restore();
+
+    // Crosshair over aim target (archer + rogue)
+    if ((this.classId === 'archer' || this.classId === 'rogue') && this._aimTarget?.alive) {
+      this._drawCrosshair(ctx);
+    }
 
     // Health bar
     const barW = 30, barH = 4;
