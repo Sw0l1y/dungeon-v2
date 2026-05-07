@@ -12,6 +12,8 @@ export class Ranger {
     this.hp       = 90;
     this.alive    = true;
     this.isEnemy  = true;
+    this._typeIdx = 2;   // for net serialization: 2=Ranger
+    this._netId   = 0;
     this.damage   = 8; // contact damage (rare)
     this._preferDist  = 220;
     this._minDist     = 140;

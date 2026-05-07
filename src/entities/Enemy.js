@@ -10,8 +10,10 @@ export class Enemy {
     this.maxHp  = 70;
     this.hp     = 70;
     this.alive  = true;
-    this.isEnemy = true;
-    this.damage  = 10;
+    this.isEnemy  = true;
+    this._typeIdx = 0;   // for net serialization: 0=Enemy
+    this._netId   = 0;   // assigned by WaveManager
+    this.damage   = 10;
     this._hitCooldown = 0;
     this._path        = [];
     this._pathTimer   = 0;

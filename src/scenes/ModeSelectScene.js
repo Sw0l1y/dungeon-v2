@@ -1,5 +1,6 @@
-import { Scene      } from './Scene.js';
-import { LobbyScene } from './LobbyScene.js';
+import { Scene           } from './Scene.js';
+import { LobbyScene      } from './LobbyScene.js';
+import { OnlineWaitScene } from './OnlineWaitScene.js';
 
 const CARD_W = 300;
 const CARD_H = 210;
@@ -78,7 +79,7 @@ export class ModeSelectScene extends Scene {
 
   _confirm(idx) {
     if (idx === 0) this.game.scenes.switch(new LobbyScene(this.game));
-    // Online: not yet implemented — card is shown disabled
+    if (idx === 1) this.game.scenes.switch(new OnlineWaitScene(this.game));
   }
 
   draw(ctx) {
@@ -108,9 +109,9 @@ export class ModeSelectScene extends Scene {
       },
       {
         label:     'ONLINE PLAY',
-        sublabel:  'Coming Soon',
+        sublabel:  '2 Players',
         detail:    'Multiplayer over network',
-        available: false,
+        available: true,
       },
     ];
 

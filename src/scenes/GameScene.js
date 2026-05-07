@@ -1,10 +1,14 @@
-import { Scene } from './Scene.js';
-import { Camera } from '../systems/Camera.js';
-import { Level1 } from '../levels/Level1.js';
+import { Scene       } from './Scene.js';
+import { Camera      } from '../systems/Camera.js';
+import { Level1      } from '../levels/Level1.js';
 import { WaveManager } from '../systems/WaveManager.js';
-import { DeathScene } from './DeathScene.js';
-import { PauseScene } from './PauseScene.js';
-import { Portal } from '../entities/Portal.js';
+import { DeathScene  } from './DeathScene.js';
+import { PauseScene  } from './PauseScene.js';
+import { TitleScene  } from './TitleScene.js';
+import { Portal      } from '../entities/Portal.js';
+
+// Ghost-enemy type colours (client-side only, index matches _typeIdx)
+const GHOST_COLORS = ['#ff6b6b', '#ff4040', '#ff9040', '#dd0044'];
 
 export class GameScene extends Scene {
   onEnter() {
@@ -14,7 +18,26 @@ export class GameScene extends Scene {
     this.waves  = new WaveManager(this.level);
     this._portalSpawned = false;
 
-    // Intro portal
+    // ── Network state (null = local play) ─────────────────────────────────────
+    this._net           = this.game.state.netSession   ?? null;
+    this._netRole       = this.game.state.netRole      ?? null; // 'host'|'client'|null
+    this._remoteBinding = this.game.state.remoteBinding ?? null;
+
+    // Ghost enemies shown on client (map of netId → {typeIdx, x, y})
+    this._ghosts     = new Map();
+    // Authoritative wave state received from host (used for client HUD)
+    this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
+    // Send-rate timers
+    this._sendTimer  = 0;
+    // Disconnect overlay
+    this._netDisconnected = false;
+
+    if (this._net) {
+      this._net.onMessage      = (data) => this._onNetMsg(data);
+      this._net.onDisconnected = ()     => { this._netDisconnected = true; };
+    }
+
+    // ── Intro portal ──────────────────────────────────────────────────────────
     const { map, tileSize: ts } = this.level;
     this._introCX    = Math.floor(map[0].length / 2) * ts + ts / 2;
     this._introCY    = Math.floor(map.length    / 2) * ts + ts / 2;
@@ -22,17 +45,17 @@ export class GameScene extends Scene {
     this._introT     = 0;
     this._introR     = 0;
     this._introAngle = 0;
-    this._INTRO_MAX_R   = 58;
-    this._INTRO_OPEN_S  = 1.1;
+    this._INTRO_MAX_R    = 58;
+    this._INTRO_OPEN_S   = 1.1;
     this._INTRO_STABLE_S = 0.6;
-    this._INTRO_CLOSE_S = 0.9;
+    this._INTRO_CLOSE_S  = 0.9;
 
     // Snap camera to player spawn (centre) immediately
     this.camera.snapTo(this._introCX, this._introCY);
     this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
 
     // Intro ambient particles (stream toward the opening portal)
-    this._introParticles     = [];
+    this._introParticles      = [];
     this._introParticleShrink = 0;  // > 0 = shrinking out after portal closes
     this._initIntroParticles();
 
@@ -45,9 +68,22 @@ export class GameScene extends Scene {
 
   onExit() {
     this.level.onExit();
+    // Leave net session open (DeathScene / next scene may inspect stats)
+    // Caller is responsible for calling net.close() if needed
   }
 
   update(dt) {
+    // ── Disconnect overlay ─────────────────────────────────────────────────────
+    if (this._netDisconnected) {
+      if (this.game.input.justPressed('Enter') || this.game.input.justPressed('Space')
+          || this.game.input.justPressed('Escape')) {
+        this._net?.close();
+        this.game.state.netSession = null;
+        this.game.scenes.switch(new TitleScene(this.game));
+      }
+      return;
+    }
+
     // Pause (allowed even during intro)
     if (this.game.input.justPressed('Backquote')) {
       this.game.scenes.push(new PauseScene(this.game, this));
@@ -56,7 +92,7 @@ export class GameScene extends Scene {
 
     this.game.state.stats.timeElapsed += dt;
 
-    // ── Intro portal sequence (players frozen until portal closes) ───────────
+    // ── Intro portal sequence (players frozen until portal closes) ────────────
     if (this._introPhase !== 'done') {
       this._updateIntro(dt);
       // Keep camera centred on spawn while portal plays
@@ -65,17 +101,25 @@ export class GameScene extends Scene {
       return;
     }
 
-    // ── Normal gameplay ───────────────────────────────────────────────────────
+    // ── Normal gameplay ────────────────────────────────────────────────────────
     // Tick down intro particle shrink-out even after portal is gone
     if (this._introParticleShrink > 0 || this._introParticles.length > 0) {
       this._updateIntroParticles(dt);
     }
 
     this.level.update(dt);
-    this.waves.update(dt);
+
+    // Wave manager: only the host (or solo player) runs waves / spawns enemies
+    if (this._netRole !== 'client') {
+      this.waves.update(dt);
+    }
 
     // Spawn death portal at map centre after boss is defeated
-    if (this.waves.bossDefeated && !this._portalSpawned) {
+    const bossDefeated = this._netRole === 'client'
+      ? this._remoteWave.bd
+      : this.waves.bossDefeated;
+
+    if (bossDefeated && !this._portalSpawned) {
       this.level.addEntity(new Portal(this.level, this._introCX, this._introCY));
       this._portalSpawned = true;
     }
@@ -99,11 +143,32 @@ export class GameScene extends Scene {
       this.game.scenes.switch(new DeathScene(this.game));
       return;
     }
-    if (ps.length > 0) {
-      const cx = ps.reduce((s, p) => s + p.x, 0) / ps.length;
-      const cy = ps.reduce((s, p) => s + p.y, 0) / ps.length;
+
+    // Camera follows the mean position of alive players
+    const alive = ps.filter(p => p.alive);
+    if (alive.length > 0) {
+      const cx = alive.reduce((s, p) => s + p.x, 0) / alive.length;
+      const cy = alive.reduce((s, p) => s + p.y, 0) / alive.length;
       this.camera.follow(cx, cy, dt);
       this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
+    }
+
+    // ── Network sync ──────────────────────────────────────────────────────────
+    if (this._net?.status === 'connected') {
+      this._sendTimer += dt;
+      if (this._netRole === 'host') {
+        if (this._sendTimer >= 0.05) {     // 20 hz state
+          this._sendTimer = 0;
+          this._net.send(this._buildStatePacket());
+        }
+      } else {
+        if (this._sendTimer >= 0.033) {   // 30 hz input
+          this._sendTimer = 0;
+          this._net.send(this._buildInputPacket());
+        }
+        // Flush remote binding (clears justPressed after level.update reads it)
+        this._remoteBinding?.flush();
+      }
     }
   }
 
@@ -143,12 +208,13 @@ export class GameScene extends Scene {
         this._introR = 0;
         for (const pl of this.level.players) pl.spawnScale = 1;
         this._introParticleShrink = 0.001;  // kick off shrink (> 0 activates it)
-        this.waves.startWave();   // first wave starts the moment portal seals
+        // Host / solo only — client's first wave is triggered by host state
+        if (this._netRole !== 'client') this.waves.startWave();
       }
     }
   }
 
-  // ── Intro particle helpers ─────────────────────────────────────────────────
+  // ── Intro particle helpers ──────────────────────────────────────────────────
 
   _makeIntroParticle(anywhere) {
     const { worldWidth: ww, worldHeight: wh } = this.level;
@@ -183,7 +249,7 @@ export class GameScene extends Scene {
     if (this._introParticleShrink > 0) {
       this._introParticleShrink += dt;
       if (this._introParticleShrink >= SHRINK_DUR) {
-        this._introParticles     = [];
+        this._introParticles      = [];
         this._introParticleShrink = 0;
         return;
       }
@@ -321,22 +387,172 @@ export class GameScene extends Scene {
     }
   }
 
+  // ── Network helpers ─────────────────────────────────────────────────────────
+
+  /** Build game-state packet (host → client, 20 hz). */
+  _buildStatePacket() {
+    const ps = this.level.players;
+    return {
+      t: 'gs',
+      p: ps.map(pl => ({
+        x:  pl.x,
+        y:  pl.y,
+        hp: pl.hp,
+        d:  pl._downed ? 1 : 0,
+        fx: pl._facingX,
+        fy: pl._facingY,
+      })),
+      en: this.level.entities
+        .filter(e => e.isEnemy && e.alive)
+        .map(e => [e._netId, e._typeIdx, Math.round(e.x), Math.round(e.y)]),
+      wv: {
+        n:   this.waves.wave,
+        act: this.waves.active       ? 1 : 0,
+        rem: this.waves.remaining,
+        bd:  this.waves.bossDefeated ? 1 : 0,
+        cd:  this.waves.countdown,
+      },
+    };
+  }
+
+  /** Build input packet (client → host, 30 hz). */
+  _buildInputPacket() {
+    // The client's local player is always index 1
+    const pl = this.level.players[1];
+    if (!pl) return { t: 'in', x: 0, y: 0, ak: 0, it: 0 };
+    const { x, y } = pl.binding.axes;
+    return {
+      t:  'in',
+      x:  x,
+      y:  y,
+      ak: pl.binding.isHeld('attack')   ? 1 : 0,
+      it: pl.binding.isHeld('interact') ? 1 : 0,
+    };
+  }
+
+  /** Handle an incoming network message. */
+  _onNetMsg(data) {
+    if (this._netRole === 'host') {
+      if (data.t === 'in') this._remoteBinding?.applyRemote(data);
+    } else {
+      if (data.t === 'gs') this._applyHostState(data);
+    }
+  }
+
+  /** Client: apply authoritative state snapshot from host. */
+  _applyHostState(state) {
+    const ps = this.level.players;
+
+    // Update player states
+    if (state.p) {
+      state.p.forEach((pd, i) => {
+        const pl = ps[i];
+        if (!pl) return;
+
+        // Player 0 = host's player: snap position to authoritative value
+        // Player 1 = our own player: accept HP / downed state from host
+        if (i === 0) {
+          pl.x = pd.x;
+          pl.y = pd.y;
+          pl._facingX = pd.fx ?? pl._facingX;
+          pl._facingY = pd.fy ?? pl._facingY;
+        }
+
+        // Authoritative HP + downed state for both players
+        pl.hp = Math.max(0, pd.hp);
+        if (pd.d && !pl._downed) { pl._downed = true;  pl.alive = false; }
+        if (!pd.d && pl._downed) { pl._downed = false; pl.alive = true;  }
+      });
+    }
+
+    // Update ghost enemies (purely visual — client renders, host does all AI/damage)
+    if (state.en) {
+      const seen = new Set();
+      for (const [id, typeIdx, x, y] of state.en) {
+        seen.add(id);
+        const g = this._ghosts.get(id);
+        if (g) { g.x = x; g.y = y; }
+        else    this._ghosts.set(id, { id, typeIdx, x, y });
+      }
+      for (const id of this._ghosts.keys()) {
+        if (!seen.has(id)) this._ghosts.delete(id);
+      }
+    }
+
+    // Update remote wave state (used for HUD)
+    if (state.wv) {
+      this._remoteWave = {
+        n:   state.wv.n,
+        act: !!state.wv.act,
+        rem: state.wv.rem,
+        bd:  !!state.wv.bd,
+        cd:  state.wv.cd,
+      };
+      // Spawn portal once host flags boss defeated
+      if (this._remoteWave.bd && !this._portalSpawned) {
+        this.level.addEntity(new Portal(this.level, this._introCX, this._introCY));
+        this._portalSpawned = true;
+      }
+    }
+  }
+
+  // ── Draw ────────────────────────────────────────────────────────────────────
+
   draw(ctx) {
     const { width, height } = this.game.canvas;
     ctx.clearRect(0, 0, width, height);
 
     ctx.save();
     this.camera.applyTransform(ctx);
+
     this.level.draw(ctx);
+
+    // Ghost enemies (client only)
+    if (this._netRole === 'client') this._drawGhosts(ctx);
+
     if (this._introPhase !== 'done') {
       this._drawIntroParticles(ctx);  // particles on top of tiles/players
       this._drawIntroPortal(ctx);     // portal void drawn last (covers centre)
     } else if (this._introParticles.length > 0) {
       this._drawIntroParticles(ctx);  // shrinking out after portal seals
     }
+
     ctx.restore();
 
     this._drawHud(ctx);
+
+    // Disconnect overlay
+    if (this._netDisconnected) this._drawDisconnect(ctx);
+  }
+
+  /** Draw simple ghost representations of enemies on the client. */
+  _drawGhosts(ctx) {
+    for (const g of this._ghosts.values()) {
+      ctx.save();
+      ctx.globalAlpha = 0.78;
+      ctx.fillStyle   = GHOST_COLORS[g.typeIdx] ?? '#ff6b6b';
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, g.typeIdx === 3 ? 38 : 13, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+      ctx.lineWidth   = 1.5;
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  _drawDisconnect(ctx) {
+    const { width: W, height: H } = this.game.canvas;
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = '#ff7070';
+    ctx.font = 'bold 28px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Connection Lost', W / 2, H / 2 - 18);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font = '16px "Trebuchet MS", sans-serif';
+    ctx.fillText('Press  Enter  to return to title', W / 2, H / 2 + 20);
   }
 
   _drawHud(ctx) {
@@ -349,6 +565,13 @@ export class GameScene extends Scene {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
     ctx.fillText(this.level.name, 16, 16);
+
+    // Top-left (second line): net role badge
+    if (this._netRole) {
+      ctx.fillStyle = 'rgba(140,243,255,0.45)';
+      ctx.font = '11px "Trebuchet MS", sans-serif';
+      ctx.fillText(this._netRole === 'host' ? '⬡ host' : '⬡ client', 16, 34);
+    }
 
     // Top-center: revive prompt for alive players near a downed ally
     const REVIVE_RANGE = 70;
@@ -380,29 +603,36 @@ export class GameScene extends Scene {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
 
+    // Use remote wave state for client; local for host / solo
+    const wv = (this._netRole === 'client') ? this._remoteWave : null;
+    const waveN    = wv ? wv.n   : this.waves.wave;
+    const waveAct  = wv ? wv.act : this.waves.active;
+    const waveRem  = wv ? wv.rem : this.waves.remaining;
+    const waveBD   = wv ? wv.bd  : this.waves.bossDefeated;
+    const waveCD   = wv ? wv.cd  : this.waves.countdown;
+
     if (this._introPhase !== 'done') {
       // Nothing — portal is the visual cue
-    } else if (this.waves.bossDefeated) {
+    } else if (waveBD) {
       ctx.fillStyle = '#ffe566';
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
       ctx.fillText('Boss Defeated!', W / 2, H - 16);
-    } else if (this.waves.active) {
-      const rem = this.waves.remaining;
+    } else if (waveAct) {
+      const rem = waveRem;
       ctx.fillStyle = rem > 0 ? '#ff7070' : '#a8ff78';
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
       ctx.fillText(
         rem > 0
-          ? `Wave ${this.waves.wave}  •  ${rem} enem${rem === 1 ? 'y' : 'ies'} left`
-          : `Wave ${this.waves.wave} cleared!`,
+          ? `Wave ${waveN}  •  ${rem} enem${rem === 1 ? 'y' : 'ies'} left`
+          : `Wave ${waveN} cleared!`,
         W / 2, H - 16,
       );
-    } else if (this.waves.countdown > 0) {
-      // Inter-wave countdown
-      const secs  = Math.ceil(this.waves.countdown);
+    } else if (waveCD > 0) {
+      const secs  = Math.ceil(waveCD);
       const alpha = 0.55 + 0.3 * Math.sin(Date.now() / 400);
       ctx.fillStyle = `rgba(200,160,255,${alpha})`;
       ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
-      ctx.fillText(`Wave ${this.waves.wave + 1}  in  ${secs}s`, W / 2, H - 16);
+      ctx.fillText(`Wave ${waveN + 1}  in  ${secs}s`, W / 2, H - 16);
     }
   }
 }

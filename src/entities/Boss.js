@@ -43,9 +43,11 @@ export class Boss {
     this.maxHp   = MAX_HP;
     this.hp      = MAX_HP;
     this.alive   = true;
-    this.isEnemy = true;
-    this.isBoss  = true;
-    this.damage  = 20;
+    this.isEnemy  = true;
+    this.isBoss   = true;
+    this._typeIdx = 3;   // for net serialization: 3=Boss
+    this._netId   = 0;
+    this.damage   = 20;
 
     // Spiral state
     this._spiralAngle   = 0;

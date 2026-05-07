@@ -12,7 +12,9 @@ export class Sprinter {
     this.alive     = true;
     this.isEnemy   = true;
     this.isSprinter = true;
-    this.damage   = 15;
+    this._typeIdx  = 1;   // for net serialization: 1=Sprinter
+    this._netId    = 0;
+    this.damage    = 15;
     this._hitCooldown = 0;
     this._path        = [];
     this._pathTimer   = 0;

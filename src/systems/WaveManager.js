@@ -12,6 +12,7 @@ export class WaveManager {
     this._enemies     = [];
     this._spawnCache  = null;
     this._countdown   = 0;   // seconds until next wave auto-starts
+    this._netIdSeq    = 0;   // monotonic counter for enemy net IDs
   }
 
   get remaining()  { return this._enemies.filter(e => e.alive).length; }
@@ -29,6 +30,7 @@ export class WaveManager {
       const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
       const cy = Math.floor(map.length    / 2) * ts + ts / 2;
       const boss = new Boss(this.level, cx, cy);
+      boss._netId = ++this._netIdSeq;
       // Give the boss a reference back to this WaveManager so it can set bossDefeated
       this.level.game.state._waveManager = this;
       this.level.addEntity(boss);
@@ -44,6 +46,7 @@ export class WaveManager {
     const spawn = (Type) => {
       const { x, y } = spots[Math.floor(Math.random() * spots.length)];
       const e = new Type(this.level, x, y);
+      e._netId = ++this._netIdSeq;
       this.level.addEntity(e);
       this._enemies.push(e);
     };
