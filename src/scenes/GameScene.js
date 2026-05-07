@@ -31,7 +31,7 @@ export class GameScene extends Scene {
     this.level.update(dt);
     this.waves.update();
 
-    if (this.game.input.justPressed('KeyV') && !this.waves.active) {
+    if (this.game.input.justPressed('KeyV') && !this.waves.active && !this.waves.bossDefeated) {
       this.waves.startWave();
     }
 
@@ -81,6 +81,10 @@ export class GameScene extends Scene {
       ctx.fillStyle = `rgba(255,255,255,${alpha})`;
       ctx.font = '15px "Trebuchet MS", sans-serif';
       ctx.fillText('V  —  start wave', W / 2, H - 16);
+    } else if (this.waves.bossDefeated) {
+      ctx.fillStyle = '#ffe566';
+      ctx.font = 'bold 15px "Trebuchet MS", sans-serif';
+      ctx.fillText('Boss Defeated!', W / 2, H - 16);
     } else {
       const rem = this.waves.remaining;
       ctx.fillStyle = rem > 0 ? '#ff7070' : '#a8ff78';

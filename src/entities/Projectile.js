@@ -31,7 +31,7 @@ export class Projectile {
     const { map, tileSize: ts } = this.level;
     const col = Math.floor(this.x / ts);
     const row = Math.floor(this.y / ts);
-    if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] === 1) {
+    if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] > 0) {
       this.level.removeEntity(this);
     }
   }

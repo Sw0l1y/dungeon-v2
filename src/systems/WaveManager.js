@@ -1,23 +1,38 @@
 import { Enemy    } from '../entities/Enemy.js';
 import { Sprinter } from '../entities/Sprinter.js';
 import { Ranger   } from '../entities/Ranger.js';
+import { Boss     } from '../entities/Boss.js';
 
 export class WaveManager {
   constructor(level) {
-    this.level    = level;
-    this.wave     = 0;
-    this.active   = false;
-    this._enemies = [];
-    this._spawnCache = null;
+    this.level        = level;
+    this.wave         = 0;
+    this.active       = false;
+    this.bossDefeated = false;
+    this._enemies     = [];
+    this._spawnCache  = null;
   }
 
   get remaining() { return this._enemies.filter(e => e.alive).length; }
 
   startWave() {
-    if (this.active) return;
+    if (this.active || this.bossDefeated) return;
     this.wave++;
     this.active   = true;
     this._enemies = [];
+
+    // Wave 5 — boss only, spawns at arena center
+    if (this.wave === 5) {
+      const { map, tileSize: ts } = this.level;
+      const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
+      const cy = Math.floor(map.length    / 2) * ts + ts / 2;
+      const boss = new Boss(this.level, cx, cy);
+      // Give the boss a reference back to this WaveManager so it can set bossDefeated
+      this.level.game.state._waveManager = this;
+      this.level.addEntity(boss);
+      this._enemies.push(boss);
+      return;
+    }
 
     const spots     = this._spawnSpots();
     const basics    = 2 + this.wave;
