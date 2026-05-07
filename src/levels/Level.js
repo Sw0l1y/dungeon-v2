@@ -81,69 +81,144 @@ export class Level {
     }
   }
 
-  // ── Soul fragments (enemy death particles) ─────────────────────────────────
+  // ── Enemy-death body fragments ────────────────────────────────────────────
 
   /**
-   * Burst `count` glowing soul fragments outward from (x, y).
-   * Fragments are permanent until absorbed by the portal.
-   * @param {number} x
-   * @param {number} y
-   * @param {string} color  — CSS colour matching the enemy type
-   * @param {number} count
+   * Burst `count` physical body-chunk fragments outward from (x, y).
+   * Each is an irregular rotating polygon with dark edge + highlight.
+   * Fragments bounce off walls and are absorbed by the portal when it exists.
    */
   spawnDeathParticles(x, y, color, count) {
-    // Soft cap — drop oldest when pool is full
     const CAP = 600;
+    const { dark, bright } = this._fragColorVariants(color);
+
     for (let i = 0; i < count; i++) {
       if (this._soulDebris.length >= CAP) this._soulDebris.shift();
-      const angle = (i / count) * Math.PI * 2 + Math.random() * 0.9;
-      const speed = 80 + Math.random() * 160;
-      const life  = 20 + Math.random() * 14;
+
+      const angle  = (i / count) * Math.PI * 2 + Math.random() * 0.85;
+      const speed  = 70 + Math.random() * 170;
+      const life   = 20 + Math.random() * 14;
+      const nSides = 3 + Math.floor(Math.random() * 3);   // 3–5 sides
+      const baseR  = 3.5 + Math.random() * 5.5;           // radius 3.5–9 px
+
+      // Build an irregular convex-ish polygon in local space
+      const pts = [];
+      for (let j = 0; j < nSides; j++) {
+        const a = (j / nSides) * Math.PI * 2
+                + (Math.random() - 0.5) * (Math.PI / nSides) * 0.7;
+        const r = baseR * (0.55 + Math.random() * 0.50);
+        pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+      }
+
       this._soulDebris.push({
-        x:    x + (Math.random() - 0.5) * 10,
-        y:    y + (Math.random() - 0.5) * 10,
-        vx:   Math.cos(angle) * speed,
-        vy:   Math.sin(angle) * speed,
-        size: 2.2 + Math.random() * 2.8,
+        x:      x + (Math.random() - 0.5) * 12,
+        y:      y + (Math.random() - 0.5) * 12,
+        vx:     Math.cos(angle) * speed,
+        vy:     Math.sin(angle) * speed,
+        angle:  Math.random() * Math.PI * 2,
+        spin:   (Math.random() - 0.5) * 14,   // rad/s
+        pts,
+        radius: baseR,
         color,
+        dark,
+        bright,
         life,
         maxLife: life,
       });
     }
   }
 
+  /** Parse #rrggbb and return darker edge + brighter highlight variants. */
+  _fragColorVariants(hex) {
+    const r = parseInt(hex.slice(1, 3), 16);
+    const g = parseInt(hex.slice(3, 5), 16);
+    const b = parseInt(hex.slice(5, 7), 16);
+    const dark   = `rgb(${Math.floor(r * 0.28)},${Math.floor(g * 0.28)},${Math.floor(b * 0.28)})`;
+    const bright = `rgb(${Math.min(255, r + 90)},${Math.min(255, g + 90)},${Math.min(255, b + 90)})`;
+    return { dark, bright };
+  }
+
   _updateSoulDebris(dt) {
-    // Decay friction — burst settles quickly, then portal gravity dominates
-    const friction = Math.pow(0.28, dt);
+    const velFric  = Math.pow(0.32, dt);   // velocity friction
+    const spinFric = Math.pow(0.88, dt);   // spin decays more slowly
+
     for (const d of this._soulDebris) {
-      d.vx  *= friction;
-      d.vy  *= friction;
-      d.x   += d.vx * dt;
-      d.y   += d.vy * dt;
+      // Rotate
+      d.spin  *= spinFric;
+      d.angle += d.spin * dt;
+
+      // Axis-separated wall bounce
+      const nx = d.x + d.vx * dt;
+      const ny = d.y + d.vy * dt;
+      const bx = this._fragBlocked(nx, d.y);
+      const by = this._fragBlocked(d.x, ny);
+
+      if (!bx) {
+        d.x = nx;
+      } else {
+        d.vx = -d.vx * 0.38;
+        d.spin += (Math.random() - 0.5) * 4;  // randomise spin on bounce
+      }
+      if (!by) {
+        d.y = ny;
+      } else {
+        d.vy = -d.vy * 0.38;
+        d.spin += (Math.random() - 0.5) * 4;
+      }
+
+      d.vx   *= velFric;
+      d.vy   *= velFric;
       d.life -= dt;
     }
     this._soulDebris = this._soulDebris.filter(d => d.life > 0);
   }
 
+  /** Returns true if world point (x, y) is inside a wall tile. */
+  _fragBlocked(x, y) {
+    if (!this.map || !this.tileSize) return false;
+    const ts  = this.tileSize;
+    const col = Math.floor(x / ts);
+    const row = Math.floor(y / ts);
+    if (row < 0 || row >= this.map.length || col < 0 || col >= this.map[0].length) return true;
+    return this.map[row][col] > 0;
+  }
+
   _drawSoulDebris(ctx) {
     for (const d of this._soulDebris) {
-      // Gentle fade-out only in last 2 s (so they look solid while alive)
-      const alpha = Math.min(1, d.life / 2) * 0.92;
+      // Fade only in last 2 s
+      const alpha = Math.min(1, d.life / 2) * 0.94;
       if (alpha < 0.02) continue;
 
-      // Outer glow
-      ctx.globalAlpha = alpha * 0.38;
-      ctx.fillStyle   = d.color;
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(d.x, d.y);
+      ctx.rotate(d.angle);
+
+      const pts = d.pts;
       ctx.beginPath();
-      ctx.arc(d.x, d.y, d.size * 2.0, 0, Math.PI * 2);
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      for (let j = 1; j < pts.length; j++) ctx.lineTo(pts[j][0], pts[j][1]);
+      ctx.closePath();
+
+      // Base fill — enemy colour
+      ctx.fillStyle = d.color;
       ctx.fill();
 
-      // Solid core
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle   = d.color;
+      // Dark edge outline — gives the chunk visual weight
+      ctx.strokeStyle = d.dark;
+      ctx.lineWidth   = 1.1;
+      ctx.stroke();
+
+      // Bright highlight on the first edge — simulates a single light source
+      ctx.strokeStyle  = d.bright;
+      ctx.lineWidth    = 0.85;
+      ctx.globalAlpha  = alpha * 0.65;
       ctx.beginPath();
-      ctx.arc(d.x, d.y, d.size, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(pts[0][0], pts[0][1]);
+      ctx.lineTo(pts[1][0], pts[1][1]);
+      ctx.stroke();
+
+      ctx.restore();
     }
     ctx.globalAlpha = 1;
   }
