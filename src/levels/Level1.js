@@ -70,20 +70,12 @@ export class Level1 extends Level {
           ctx.lineWidth = 1;
           ctx.strokeRect(c * TILE, r * TILE, TILE, TILE);
         } else if (tile === 2) {
-          // Destructible wall — warmer tint with subtle crack lines
-          ctx.fillStyle = '#2a2e3d';
+          // Destructible wall — same appearance as permanent wall
+          ctx.fillStyle = '#1a2340';
           ctx.fillRect(c * TILE, r * TILE, TILE, TILE);
-          ctx.strokeStyle = 'rgba(180,130,60,0.22)';
+          ctx.strokeStyle = 'rgba(91,195,255,0.08)';
           ctx.lineWidth = 1;
           ctx.strokeRect(c * TILE, r * TILE, TILE, TILE);
-          // Crack mark
-          ctx.strokeStyle = 'rgba(180,130,60,0.18)';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(c * TILE + TILE * 0.3, r * TILE + TILE * 0.2);
-          ctx.lineTo(c * TILE + TILE * 0.5, r * TILE + TILE * 0.6);
-          ctx.lineTo(c * TILE + TILE * 0.7, r * TILE + TILE * 0.8);
-          ctx.stroke();
         }
       }
     }

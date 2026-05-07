@@ -183,10 +183,24 @@ export class Boss {
   _spawnSprinters(count) {
     const active  = this.level.entities.filter(e => e.isSprinter && e.alive).length;
     const toSpawn = Math.min(count, SPRINTER_CAP - active);
+    const { map, tileSize: ts } = this.level;
     for (let i = 0; i < toSpawn; i++) {
-      const a    = Math.random() * Math.PI * 2;
-      const dist = this.radius + 70 + Math.random() * 50;
-      this.level.addEntity(new Sprinter(this.level, this.x + Math.cos(a) * dist, this.y + Math.sin(a) * dist));
+      // Try up to 12 candidate angles, pick first that lands on a floor tile
+      let placed = false;
+      for (let attempt = 0; attempt < 12; attempt++) {
+        const a    = (Math.random() + attempt / 12) * Math.PI * 2;
+        const dist = this.radius + 70 + Math.random() * 50;
+        const sx   = this.x + Math.cos(a) * dist;
+        const sy   = this.y + Math.sin(a) * dist;
+        const col  = Math.floor(sx / ts);
+        const row  = Math.floor(sy / ts);
+        if ((map[row]?.[col] ?? 1) === 0) {
+          this.level.addEntity(new Sprinter(this.level, sx, sy));
+          placed = true;
+          break;
+        }
+      }
+      // Skip this spawn if no clear tile found (prevents stuck-in-wall sprinters)
     }
   }
 
