@@ -3,6 +3,7 @@ import { Camera } from '../systems/Camera.js';
 import { Level1 } from '../levels/Level1.js';
 import { WaveManager } from '../systems/WaveManager.js';
 import { DeathScene } from './DeathScene.js';
+import { PauseScene } from './PauseScene.js';
 
 export class GameScene extends Scene {
   onEnter() {
@@ -11,6 +12,8 @@ export class GameScene extends Scene {
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
 
+    // Init run stats (reset each new game)
+    this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
   }
 
   onExit() {
@@ -18,6 +21,13 @@ export class GameScene extends Scene {
   }
 
   update(dt) {
+    // Pause
+    if (this.game.input.justPressed('Escape')) {
+      this.game.scenes.push(new PauseScene(this.game, this));
+      return;
+    }
+
+    this.game.state.stats.timeElapsed += dt;
     this.level.update(dt);
     this.waves.update();
 

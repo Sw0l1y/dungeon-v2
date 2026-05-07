@@ -17,15 +17,19 @@ export class Sprinter {
     this._pathTimer   = 0;
   }
 
-  takeDamage(amount) {
+  takeDamage(amount, source = null) {
     if (!this.alive) return;
+    const dealt = Math.min(amount, this.hp);
     this.hp = Math.max(0, this.hp - amount);
+    if (source) source.dmgDealt = (source.dmgDealt || 0) + dealt;
     if (this.hp === 0) this.die();
   }
 
   die() {
     this.alive = false;
     this.level.removeEntity(this);
+    const stats = this.level.game?.state?.stats;
+    if (stats) stats.enemiesKilled++;
   }
 
   update(dt) {

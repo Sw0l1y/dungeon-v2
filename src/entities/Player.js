@@ -29,11 +29,16 @@ export class Player {
     this._dashTrail = [];
     // Archer targeting
     this._aimTarget = null;
+    // Stats
+    this.dmgDealt = 0;
+    this.dmgTaken = 0;
   }
 
   takeDamage(amount) {
     if (this._iframes > 0 || !this.alive) return;
+    const dealt = Math.min(amount, this.hp);
     this.hp = Math.max(0, this.hp - amount);
+    this.dmgTaken += dealt;
     this._iframes = 0.6;
     if (this.hp === 0) this.alive = false;
   }
@@ -84,7 +89,7 @@ export class Player {
       for (const e of [...this.level.entities]) {
         if (!e.isEnemy || !e.alive || this._dashHit.has(e)) continue;
         if (Math.hypot(e.x - this.x, e.y - this.y) < this.radius + e.radius + 2) {
-          e.takeDamage(50);
+          e.takeDamage(50, this);
           this._dashHit.add(e);
         }
       }
