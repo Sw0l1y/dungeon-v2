@@ -49,6 +49,7 @@ export class OnlineLobbyScene extends Scene {
         ]
       : null;   // populated on first lobbySync
 
+    this._kicked       = false;   // client was removed by host
     this._copyBtnRect  = null;
     this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
@@ -71,12 +72,33 @@ export class OnlineLobbyScene extends Scene {
 
       this._net.onMessage = (data) => {
         if (isHost) {
-          // Client updating their slot's name / color
+          // Client updating their slot's name/color — includes slot idx for 2-player support
           if (data.t === 'clientUpdate') {
-            const ri = this._findRemoteIdx();
+            const ri = (typeof data.idx === 'number' && this._slots[data.idx]?.isRemote)
+              ? data.idx
+              : this._findRemoteIdx();
             if (ri !== -1) {
               if (typeof data.n === 'string') this._slots[ri].name     = data.n;
               if (typeof data.c === 'number') this._slots[ri].colorIdx = data.c;
+            }
+          }
+          // Client wants to add their 2nd local player as a remote slot
+          if (data.t === 'clientAddPlayer') {
+            const remoteCount = this._slots.filter(s => s.active && s.isRemote).length;
+            if (remoteCount < MAX_LOCAL) {
+              const emptyIdx = this._slots.findIndex(s => !s.active);
+              if (emptyIdx !== -1) {
+                this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: emptyIdx % COLORS.length, isRemote: true };
+                this._syncLobby();
+              }
+            }
+          }
+          // Client removing one of their remote slots
+          if (data.t === 'clientRemoveSlot' && typeof data.idx === 'number') {
+            const s = this._slots[data.idx];
+            if (s?.isRemote) {
+              this._slots[data.idx] = defaultSlot(data.idx);
+              this._syncLobby();
             }
           }
         } else {
@@ -95,6 +117,10 @@ export class OnlineLobbyScene extends Scene {
             );
             this._doLaunch();
           }
+          // Host kicked this client
+          if (data.t === 'kicked') {
+            this._kicked = true;
+          }
         }
       };
 
@@ -102,10 +128,9 @@ export class OnlineLobbyScene extends Scene {
         this._connected = false;
         this._error = 'Other device disconnected';
         if (isHost && this._slots) {
-          // Clear the remote slot so it can be re-used
-          const ri = this._findRemoteIdx();
-          if (ri !== -1) {
-            this._slots[ri] = defaultSlot(ri);
+          // Clear ALL remote slots so they can be re-used
+          for (let i = 0; i < this._slots.length; i++) {
+            if (this._slots[i].isRemote) this._slots[i] = defaultSlot(i);
           }
         }
       };
@@ -217,6 +242,13 @@ export class OnlineLobbyScene extends Scene {
     const click  = this._pendingClick;
     this._pendingClick = null;
 
+    // Kicked: only allow going back
+    if (this._kicked) {
+      if (input.justPressed('Escape') || input.justPressed('Enter')) this._goBack();
+      if (click) this._handleClick(click);
+      return;
+    }
+
     // Escape: stop editing or go back
     if (input.justPressed('Escape')) {
       if (this._editingSlot !== null) { this._editingSlot = null; return; }
@@ -236,7 +268,7 @@ export class OnlineLobbyScene extends Scene {
         }
         if (changed) {
           if (this._role === 'host') this._syncLobby();
-          else this._net?.send({ t: 'clientUpdate', n: slot.name });
+          else this._net?.send({ t: 'clientUpdate', idx: this._editingSlot, n: slot.name });
         }
       }
       if (input.justPressed('Enter')) { this._editingSlot = null; return; }
@@ -251,8 +283,9 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _handleClick(pt) {
-    // Back button
+    // Back button — works even when kicked
     if (this._hit(this._backBtn(), pt)) { this._goBack(); return; }
+    if (this._kicked) return;
 
     // Copy code button
     if (this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
@@ -270,13 +303,33 @@ export class OnlineLobbyScene extends Scene {
     const slots = this._slots;
     if (!slots) return;
 
+    // Client: "+ Add 2nd Player" on the first empty slot
+    if (!isHost) {
+      const remoteCount = slots.filter(s => s.active && s.isRemote).length;
+      if (remoteCount < MAX_LOCAL) {
+        const firstEmpty = slots.findIndex(s => !s.active);
+        if (firstEmpty !== -1) {
+          const card = this._cardRect(firstEmpty);
+          if (this._hit(this._addBtn(card), pt)) {
+            this._net?.send({ t: 'clientAddPlayer' });
+            return;
+          }
+        }
+      }
+    }
+
     for (let idx = 0; idx < 4; idx++) {
       const slot = slots[idx];
       const card = this._cardRect(idx);
 
       if (slot.active) {
-        // ── Remove (host only) ──────────────────────────────────────────────
+        // ── Host remove ─────────────────────────────────────────────────────
         if (isHost && this._hit(this._removeBtn(card), pt)) {
+          // If removing the last remote slot, notify the client they're kicked
+          if (slot.isRemote) {
+            const remoteCount = slots.filter(s => s.active && s.isRemote).length;
+            if (remoteCount === 1) this._net?.send({ t: 'kicked' });
+          }
           slot.active   = false;
           slot.isRemote = false;
           if (this._editingSlot === idx) this._editingSlot = null;
@@ -284,7 +337,16 @@ export class OnlineLobbyScene extends Scene {
           return;
         }
 
-        // ── Edit: host→local slots; client→their remote slot ───────────────
+        // ── Client remove own secondary remote slot ──────────────────────────
+        if (!isHost && slot.isRemote) {
+          const remoteCount = slots.filter(s => s.active && s.isRemote).length;
+          if (remoteCount > 1 && this._hit(this._removeBtn(card), pt)) {
+            this._net?.send({ t: 'clientRemoveSlot', idx });
+            return;
+          }
+        }
+
+        // ── Edit: host→local slots; client→their remote slots ───────────────
         const canEdit = isHost ? !slot.isRemote : slot.isRemote;
         if (!canEdit) continue;
 
@@ -294,13 +356,13 @@ export class OnlineLobbyScene extends Scene {
           if (this._hit(this._colorSwatch(card, ci), pt)) {
             slot.colorIdx = ci;
             if (isHost) this._syncLobby();
-            else this._net?.send({ t: 'clientUpdate', c: ci });
+            else this._net?.send({ t: 'clientUpdate', idx, c: ci });
             return;
           }
         }
 
       } else {
-        // ── Add player (host only, max 2 local) ────────────────────────────
+        // ── Host add player (max 2 local) ─────────────────────────────────
         if (isHost && this._hit(this._addBtn(card), pt)) {
           const localCount = slots.filter(s => s.active && !s.isRemote).length;
           if (localCount < MAX_LOCAL) {
@@ -397,6 +459,13 @@ export class OnlineLobbyScene extends Scene {
       ctx.fillText(this._error, W / 2, 95);
     }
 
+    // ── Client kicked ─────────────────────────────────────────────────────
+    if (!isHost && this._kicked) {
+      this._drawKickedOverlay(ctx, W, H);
+      this._drawBackBtn(ctx);
+      return;
+    }
+
     // ── Client awaiting first sync ─────────────────────────────────────────
     if (!isHost && !this._slots) {
       this._drawCenteredSpinner(ctx, W, H, t);
@@ -428,7 +497,7 @@ export class OnlineLobbyScene extends Scene {
       ? 'Type name  •  Enter to confirm'
       : isHost
         ? 'Click slot to add  •  × to remove  •  Enter to start'
-        : 'Click your name or color to customize';
+        : 'Click name/color to edit  •  + to add 2nd local player';
     ctx.fillText(hint, W / 2, H - 8);
   }
 
@@ -471,6 +540,27 @@ export class OnlineLobbyScene extends Scene {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(`Room: ${this._code}`, W / 2, cy);
     }
+  }
+
+  _drawKickedOverlay(ctx, W, H) {
+    const cx = W / 2;
+    const cy = H / 2 - 30;
+
+    // Semi-transparent panel
+    ctx.fillStyle = 'rgba(10,14,28,0.85)';
+    ctx.beginPath(); ctx.roundRect(cx - 220, cy - 56, 440, 112, 16); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,80,80,0.4)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(cx - 220, cy - 56, 440, 112, 16); ctx.stroke();
+
+    ctx.fillStyle = '#ff7070';
+    ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('You were removed from the lobby', cx, cy - 16);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '13px "Trebuchet MS", sans-serif';
+    ctx.fillText('Press ESC or click Back to return', cx, cy + 18);
   }
 
   _drawCenteredSpinner(ctx, W, H, _t) {
@@ -538,12 +628,22 @@ export class OnlineLobbyScene extends Scene {
     const isHost = this._role === 'host';
 
     if (!slot || !slot.active) {
-      if (isHost) this._drawAddCard(ctx, card, idx);
-      else        this._drawEmptyCard(ctx, card, idx);
+      if (isHost) {
+        this._drawAddCard(ctx, card, idx);
+      } else {
+        // Client: show "+ Add 2nd Player" on the first empty slot when < 2 remotes
+        const remoteCount = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
+        const firstEmpty  = (this._slots ?? []).findIndex(s => !s.active);
+        if (remoteCount < MAX_LOCAL && idx === firstEmpty) {
+          this._drawClientAddCard(ctx, card, idx);
+        } else {
+          this._drawEmptyCard(ctx, card, idx);
+        }
+      }
       return;
     }
 
-    // canEdit: host edits local (non-remote) slots; client edits their remote slot
+    // canEdit: host edits local (non-remote) slots; client edits their remote slots
     const canEdit = isHost ? !slot.isRemote : slot.isRemote;
     this._drawActiveCard(ctx, card, idx, slot, canEdit);
   }
@@ -612,6 +712,42 @@ export class OnlineLobbyScene extends Scene {
     ctx.fillText('+ Add Player', x + w / 2, btn.y + btn.h / 2);
   }
 
+  // Client's "add my 2nd player" card — only shown on the first empty slot
+  _drawClientAddCard(ctx, card, idx) {
+    const { x, y, w, h } = card;
+    const btn = this._addBtn(card);
+    const hov = this._hit(btn, this._mouse);
+
+    ctx.fillStyle = 'rgba(140,243,255,0.03)';
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
+    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
+
+    ctx.fillStyle = hov ? 'rgba(140,243,255,0.14)' : 'rgba(140,243,255,0.06)';
+    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.fill();
+    ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.2)';
+    ctx.lineWidth = hov ? 1.5 : 1;
+    ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.stroke();
+
+    ctx.fillStyle = hov ? '#8cf3ff' : 'rgba(255,255,255,0.5)';
+    ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('+ Add Local Player', x + w / 2, btn.y + btn.h / 2 - 7);
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.font = '11px "Trebuchet MS", sans-serif';
+    ctx.fillText('play on this device', x + w / 2, btn.y + btn.h / 2 + 10);
+  }
+
   _drawActiveCard(ctx, card, idx, slot, canEdit) {
     const { x, y, w, h } = card;
     const isHost = this._role === 'host';
@@ -630,8 +766,10 @@ export class OnlineLobbyScene extends Scene {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
 
-    // Right badge — shift left to clear × button on host view
-    const badgeRight = x + w - (isHost ? 40 : 12);
+    // Right badge — shift left to clear × button when it's visible
+    const remoteCountForBadge = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
+    const hasRemoveBtn = isHost || (!isHost && slot.isRemote && remoteCountForBadge > 1);
+    const badgeRight   = x + w - (hasRemoveBtn ? 40 : 12);
     if (slot.isRemote) {
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
@@ -649,8 +787,10 @@ export class OnlineLobbyScene extends Scene {
       }
     }
 
-    // ── Remove button (host only) ──────────────────────────────────────────
-    if (isHost) {
+    // ── Remove button (host always; client on their 2nd remote slot) ──────
+    const remoteCount   = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
+    const showRemoveBtn = isHost || (!isHost && slot.isRemote && remoteCount > 1);
+    if (showRemoveBtn) {
       const rb  = this._removeBtn(card);
       const hov = this._hit(rb, this._mouse);
       ctx.fillStyle = hov ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.06)';
