@@ -520,11 +520,11 @@ export class GameScene extends Scene {
 
         // For host-local players: push their movement axes into the RemoteBinding so
         // Player.update() smoothly extrapolates their position between state packets
-        // instead of freezing them (axes default to 0 on a fresh RemoteBinding).
+        // instead of freezing them (axes default to {0,0} on a fresh RemoteBinding).
+        // Use applyRemote() — axes is a getter-only property, direct assignment throws
+        // in strict-mode ES modules and would silently kill the rest of this handler.
         if (i < this._hostPlayerCount && pd.ax !== undefined) {
-          if (pl.binding?.axes !== undefined) {
-            pl.binding.axes = { x: pd.ax, y: pd.ay ?? 0 };
-          }
+          pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
         }
 
         // Authoritative HP + downed state for all players
