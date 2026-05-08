@@ -161,6 +161,13 @@
     .wave-add-btn.boss { border-color: rgba(255,100,100,.3); color: rgba(255,120,120,.7); background: rgba(255,60,60,.04); }
     .wave-add-btn.boss:hover { border-color: #ff7070; color: #ff7070; background: rgba(255,60,60,.1); }
 
+    /* Symmetry buttons */
+    .sym-row { display: flex; gap: 4px; margin-top: 5px; }
+    .sym-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 6px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; cursor: pointer; color: var(--muted); font-family: inherit; font-size: 10px; font-weight: 700; transition: all .1s; }
+    .sym-btn:hover { border-color: rgba(140,243,255,.35); color: var(--text); }
+    .sym-btn.active { border-color: rgba(255,210,76,.6); background: rgba(255,210,76,.08); color: #ffd24c; }
+    .sym-icon { font-size: 13px; line-height: 1; }
+
     /* Header buttons */
     .hdr-btn { padding: 4px 11px; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: inherit; font-size: 11px; font-weight: 700; cursor: pointer; transition: all .12s; white-space: nowrap; }
     .hdr-btn:hover { border-color: rgba(140,243,255,.5); background: rgba(140,243,255,.08); color: var(--accent); }
@@ -209,7 +216,7 @@
   <header>
     <h1>⬡ DUNGEON MAP EDITOR</h1>
     <span class="spacer"></span>
-    <span class="ver-badge">Editor <span id="editor-ver-text">v1.4</span></span>
+    <span class="ver-badge">Editor <span id="editor-ver-text">v1.5</span></span>
     <span class="ver-badge" id="map-version-display">map-v1.0</span>
     <button class="hdr-btn" id="btn-undo" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
     <button class="hdr-btn" id="btn-load">📂 Load</button>
@@ -255,6 +262,19 @@
         <div style="margin-top:4px;">
           <button class="spawn-btn" id="spawn-mode-btn">⚑ Set Spawn<span class="shortcut" style="margin-left:auto;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;">5</span></button>
         </div>
+      </div>
+
+      <div class="tool-section">
+        <div class="tool-label">Symmetry</div>
+        <div class="sym-row">
+          <button class="sym-btn" id="sym-h-btn" title="Mirror left↔right (H)">
+            <span class="sym-icon">⇹</span> H Mirror<span class="shortcut" style="font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;margin-left:auto;">H</span>
+          </button>
+          <button class="sym-btn" id="sym-v-btn" title="Mirror top↕bottom (V)">
+            <span class="sym-icon">⇳</span> V Mirror<span class="shortcut" style="font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;margin-left:auto;">V</span>
+          </button>
+        </div>
+        <p class="hint" style="margin-top:5px;">Both active = 4-way symmetry. Guides always shown.</p>
       </div>
 
       <div class="tool-section">
@@ -354,7 +374,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v1.4';
+const EDITOR_VERSION = 'v1.5';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -374,6 +394,8 @@ let activeRoom = 0;
 let activeTile = 1;
 let spawnMode  = false;
 let painting   = false;
+let symH       = false;   // left↔right mirror
+let symV       = false;   // top↕bottom mirror
 let fsHandle   = null;
 let dragSrc    = null;
 
@@ -762,6 +784,65 @@ function render() {
   ctx.beginPath(); ctx.arc(sx,sy,TILE_PX*.3,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#07111c'; ctx.font=`bold ${TILE_PX*.38}px monospace`;
   ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('P',sx,sy+1); ctx.restore();
+  drawGuides();
+}
+
+// ── Symmetry guides ───────────────────────────────────────────────────────
+function drawGuides() {
+  const room = state.campaign[activeRoom];
+  if (!room) return;
+  const W    = room.cols * TILE_PX;
+  const H    = room.rows * TILE_PX;
+  const midX = room.cols / 2 * TILE_PX;
+  const midY = room.rows / 2 * TILE_PX;
+
+  ctx.save();
+
+  // ── Symmetry axis lines (only when active) ────────────────────────────
+  if (symH) {
+    ctx.strokeStyle = 'rgba(255,210,76,0.28)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(midX, 0); ctx.lineTo(midX, H); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  if (symV) {
+    ctx.strokeStyle = 'rgba(255,210,76,0.28)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.moveTo(0, midY); ctx.lineTo(W, midY); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ── Center crosshair (always visible) ────────────────────────────────
+  const A = 7; // arm length
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = '#8cf3ff';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(midX - A, midY); ctx.lineTo(midX + A, midY);
+  ctx.moveTo(midX, midY - A); ctx.lineTo(midX, midY + A);
+  ctx.stroke();
+  // Center dot
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = '#8cf3ff';
+  ctx.beginPath(); ctx.arc(midX, midY, 2, 0, Math.PI*2); ctx.fill();
+
+  // ── Side midpoint tick markers (always visible) ───────────────────────
+  const T = 5;   // tick triangle half-width
+  const D = T * 1.5; // depth into map
+  ctx.globalAlpha = 0.50;
+  ctx.fillStyle = '#8cf3ff';
+  // Top ▽
+  ctx.beginPath(); ctx.moveTo(midX, D); ctx.lineTo(midX-T, 0); ctx.lineTo(midX+T, 0); ctx.closePath(); ctx.fill();
+  // Bottom △
+  ctx.beginPath(); ctx.moveTo(midX, H-D); ctx.lineTo(midX-T, H); ctx.lineTo(midX+T, H); ctx.closePath(); ctx.fill();
+  // Left ▷
+  ctx.beginPath(); ctx.moveTo(D, midY); ctx.lineTo(0, midY-T); ctx.lineTo(0, midY+T); ctx.closePath(); ctx.fill();
+  // Right ◁
+  ctx.beginPath(); ctx.moveTo(W-D, midY); ctx.lineTo(W, midY-T); ctx.lineTo(W, midY+T); ctx.closePath(); ctx.fill();
+
+  ctx.restore();
 }
 
 // ── Color section ─────────────────────────────────────────────────────────
@@ -933,13 +1014,24 @@ function tileAt(e){
   const rect=canvas.getBoundingClientRect();
   return { col:Math.floor((e.clientX-rect.left)*canvas.width/rect.width/TILE_PX), row:Math.floor((e.clientY-rect.top)*canvas.height/rect.height/TILE_PX) };
 }
+function setTile(room, c, r, tile) {
+  if (r < 0 || r >= room.rows || c < 0 || c >= room.cols) return;
+  room.tiles[r][c] = tile;
+}
 function paintAt(e){
   const room=state.campaign[activeRoom];
   const {col,row}=tileAt(e);
   if(col<0||col>=room.cols||row<0||row>=room.rows) return;
   if(spawnMode){ if(room.tiles[row][col]===0){ room.playerSpawn={col,row}; setSpawnMode(false); render(); } return; }
-  const tile=e.button===2?0:activeTile;
-  if(room.tiles[row][col]!==tile){ room.tiles[row][col]=tile; render(); }
+  const tile = e.button===2 ? 0 : activeTile;
+  const mc   = room.cols - 1 - col;  // mirrored col
+  const mr   = room.rows - 1 - row;  // mirrored row
+  let changed = false;
+  if(room.tiles[row][col] !== tile)               { setTile(room,col,row,tile); changed=true; }
+  if(symH && mc!==col)                            { setTile(room,mc,row,tile);  changed=true; }
+  if(symV && mr!==row)                            { setTile(room,col,mr,tile);  changed=true; }
+  if(symH && symV && mc!==col && mr!==row)        { setTile(room,mc,mr,tile);   changed=true; }
+  if(changed) render();
 }
 canvas.addEventListener('mousedown',e=>{ e.preventDefault(); if(!spawnMode) pushUndo(); painting=true; paintAt(e); });
 canvas.addEventListener('mousemove',e=>{ if(painting) paintAt(e); });
@@ -951,6 +1043,12 @@ canvas.addEventListener('contextmenu',e=>e.preventDefault());
 const spawnBtn=document.getElementById('spawn-mode-btn');
 function setSpawnMode(on){ spawnMode=on; spawnBtn.classList.toggle('active',on); document.getElementById('canvas-wrap').classList.toggle('spawn-mode',on); }
 spawnBtn.addEventListener('click',()=>setSpawnMode(!spawnMode));
+
+// ── Symmetry toggles ─────────────────────────────────────────────────────
+function setSymH(on){ symH=on; document.getElementById('sym-h-btn').classList.toggle('active',on); render(); }
+function setSymV(on){ symV=on; document.getElementById('sym-v-btn').classList.toggle('active',on); render(); }
+document.getElementById('sym-h-btn').addEventListener('click',()=>setSymH(!symH));
+document.getElementById('sym-v-btn').addEventListener('click',()=>setSymV(!symV));
 
 // ── Tile type buttons ─────────────────────────────────────────────────────
 document.querySelectorAll('.tile-btn').forEach(btn=>{
@@ -966,6 +1064,8 @@ window.addEventListener('keydown',e=>{
   if(e.key==='3'){ activeTile=2; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='4'){ activeTile=3; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='5'){ setSpawnMode(!spawnMode); }
+  if(e.key==='h'||e.key==='H'){ setSymH(!symH); }
+  if(e.key==='v'||e.key==='V'){ setSymV(!symV); }
   if((e.ctrlKey||e.metaKey)&&e.key==='s'){ e.preventDefault(); syncToLive(); }
   if((e.ctrlKey||e.metaKey)&&e.key==='z'){ e.preventDefault(); undo(); }
 });
