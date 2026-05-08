@@ -1,5 +1,12 @@
 import { SwordSwing } from './SwordSwing.js';
 import { Projectile  } from './Projectile.js';
+import { HomingArrow } from './HomingArrow.js';
+
+const ABILITY_COOLDOWNS = {
+  sword:  6.0,
+  rogue:  10.0,
+  archer: 7.5,
+};
 
 export class Player {
   constructor(game, level, x, y, binding, name = 'Player', color = '#8cf3ff', classId = 'sword') {
@@ -19,7 +26,18 @@ export class Player {
     this._facingX    = 0;
     this._facingY    = 1;
     this._atkCooldown = 0;
+    this._abilityCooldown = 0;
+    this._abilityMaxCooldown = ABILITY_COOLDOWNS[classId] ?? 1;
     this._iframes     = 0;
+    this._damageShield = 0;
+    // Sword ability
+    this._lunging = false;
+    this._lungeTimer = 0;
+    this._lungeDuration = 0.18;
+    this._lungeDirX = 0;
+    this._lungeDirY = 1;
+    this._lungeHit = new Set();
+    this._lungeArc = 0;
     // Rogue
     this._dashing   = false;
     this._dashTimer = 0;
@@ -27,6 +45,7 @@ export class Player {
     this._dashDirY  = 0;
     this._dashHit   = new Set();
     this._dashTrail = [];
+    this._ricochetTrail = [];
     // Archer / rogue targeting
     this._aimTarget = null;
     // Knockback impulse (set externally, decays each frame)
@@ -43,6 +62,7 @@ export class Player {
 
   takeDamage(amount) {
     if (this._iframes > 0 || !this.alive) return;
+    if (this._damageShield > 0) amount *= 0.25;
     const dealt = Math.min(amount, this.hp);
     this.hp = Math.max(0, this.hp - amount);
     this.dmgTaken += dealt;
@@ -93,6 +113,8 @@ export class Player {
 
     this._iframes     = Math.max(0, this._iframes - dt);
     this._atkCooldown = Math.max(0, this._atkCooldown - dt);
+    this._abilityCooldown = Math.max(0, this._abilityCooldown - dt);
+    this._damageShield = Math.max(0, this._damageShield - dt);
 
     // Knockback — decelerates at 1600 px/s²
     if (this._knockbackVx !== 0 || this._knockbackVy !== 0) {
@@ -136,13 +158,190 @@ export class Player {
       }
     }
 
+    if (this._lunging) this._updateLunge(dt);
+
     // Fade trail
     for (const t of this._dashTrail) t.a -= dt * 6;
     this._dashTrail = this._dashTrail.filter(t => t.a > 0);
+    for (const t of this._ricochetTrail) {
+      t.delay -= dt;
+      if (t.delay <= 0) t.a -= dt * 1.35;
+    }
+    this._ricochetTrail = this._ricochetTrail.filter(t => t.a > 0);
+
+    if (this.binding.justPressed('abilityA') && this._abilityCooldown === 0) {
+      this._useAbility(ax, ay);
+    }
 
     if (this.binding.justPressed('attack') && this._atkCooldown === 0) {
       this._attack();
     }
+  }
+
+  _useAbility(ax, ay) {
+    if (this.classId === 'sword') {
+      this._startLunge(ax, ay);
+    } else if (this.classId === 'rogue') {
+      this._ricochetDash();
+    } else if (this.classId === 'archer') {
+      this._homingVolley();
+    }
+  }
+
+  _startLunge(_ax, _ay) {
+    if (this._lunging) return;
+    // Always lunge toward the nearest enemy (auto-aim), fall back to facing direction
+    const target = this._nearestEnemy();
+    if (target) {
+      const dx = target.x - this.x;
+      const dy = target.y - this.y;
+      const len = Math.hypot(dx, dy) || 1;
+      this._lungeDirX = dx / len;
+      this._lungeDirY = dy / len;
+    } else {
+      this._lungeDirX = this._facingX;
+      this._lungeDirY = this._facingY;
+    }
+    this._lunging = true;
+    this._lungeTimer = this._lungeDuration;
+    this._lungeHit.clear();
+    this._damageShield = 0.28;
+    this._abilityCooldown = this._abilityMaxCooldown;
+  }
+
+  _updateLunge(dt) {
+    const speed = 670;
+    const nx = this.x + this._lungeDirX * speed * dt;
+    const ny = this.y + this._lungeDirY * speed * dt;
+    let blocked = false;
+    if (!this._collidesAt(nx, this.y)) this.x = nx; else blocked = true;
+    if (!this._collidesAt(this.x, ny)) this.y = ny; else blocked = true;
+
+    const base = Math.atan2(this._lungeDirY, this._lungeDirX);
+    const arc = Math.PI * 0.92;
+    const half = arc / 2;
+    const range = 72;
+    this._lungeArc = base + Math.sin((1 - this._lungeTimer / this._lungeDuration) * Math.PI) * 0.45;
+    for (const e of [...this.level.entities]) {
+      if (!e.isEnemy || !e.alive || this._lungeHit.has(e)) continue;
+      const dist = Math.hypot(e.x - this.x, e.y - this.y);
+      if (dist > range + e.radius) continue;
+      let diff = Math.atan2(e.y - this.y, e.x - this.x) - base;
+      diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI;
+      if (Math.abs(diff) <= half) {
+        e.takeDamage(64, this, 'melee');
+        this._lungeHit.add(e);
+        if (dist > 0) {
+          const push = 18;
+          e.x += ((e.x - this.x) / dist) * push;
+          e.y += ((e.y - this.y) / dist) * push;
+        }
+      }
+    }
+
+    this._lungeTimer -= dt;
+    if (this._lungeTimer <= 0 || blocked) {
+      this._lunging = false;
+      this._lungeHit.clear();
+    }
+  }
+
+  _ricochetDash() {
+    const targets = this._ricochetTargets();
+    if (targets.length === 0) return;
+
+    const points = [{ x: this.x, y: this.y }];
+    for (const target of targets) {
+      if (!target.alive) continue;
+      points.push({ x: target.x, y: target.y });
+      target.takeDamage(target.hp ?? 9999, this, 'melee');
+    }
+    const end = points[points.length - 1];
+    this.x = end.x;
+    this.y = end.y;
+    this._iframes = 0.20;
+    this._abilityCooldown = this._abilityMaxCooldown;
+    this._dashTrail.push({ x: this.x, y: this.y, a: 0.75 });
+
+    for (let i = 1; i < points.length; i++) {
+      this._ricochetTrail.push({
+        x0: points[i - 1].x,
+        y0: points[i - 1].y,
+        x1: points[i].x,
+        y1: points[i].y,
+        delay: 0.06 * i,
+        a: 1,
+      });
+    }
+  }
+
+  _ricochetTargets() {
+    const maxRange = Math.min(this.level.worldWidth ?? 1000, this.level.worldHeight ?? 700) * 0.55;
+    const picked = [];
+    let fromX = this.x;
+    let fromY = this.y;
+    for (let i = 0; i < 3; i++) {
+      let best = null;
+      let bestScore = Infinity;
+      for (const e of this.level.entities) {
+        if (!this._canRicochetKill(e) || picked.includes(e)) continue;
+        const d = Math.hypot(e.x - fromX, e.y - fromY);
+        if (d > maxRange) continue;
+        const score = d / (e.isSprinter ? 1.35 : 1);
+        if (score < bestScore) { bestScore = score; best = e; }
+      }
+      if (!best) break;
+      picked.push(best);
+      fromX = best.x;
+      fromY = best.y;
+    }
+    return picked;
+  }
+
+  _canRicochetKill(e) {
+    if (!e?.isEnemy || !e.alive) return false;
+    if (e.isBoss || e.isElite || e.instantKillImmune) return false;
+    return e.constructor?.name !== 'Pulsar';
+  }
+
+  _homingVolley() {
+    const count = 5;
+    const speed = 360;
+    const targets = this._volleyTargets(count);
+    if (targets.length === 0) return;
+
+    this._abilityCooldown = this._abilityMaxCooldown;
+    for (let i = 0; i < count; i++) {
+      const target = targets[i % targets.length];
+      const spread = (i - (count - 1) / 2) * 0.16;
+      let base = Math.atan2(this._facingY, this._facingX);
+      if (target) base = Math.atan2(target.y - this.y, target.x - this.x);
+      const angle = base + spread;
+      this.level.addEntity(new HomingArrow(
+        this.level,
+        this.x + Math.cos(angle) * 12,
+        this.y + Math.sin(angle) * 12,
+        Math.cos(angle) * speed,
+        Math.sin(angle) * speed,
+        this,
+        target,
+      ));
+    }
+  }
+
+  _volleyTargets(count) {
+    const scored = [];
+    for (const e of this.level.entities) {
+      if (!e.isEnemy || !e.alive) continue;
+      const dist = Math.hypot(e.x - this.x, e.y - this.y);
+      if (dist > 520) continue;
+      const los = this._hasLos(e);
+      const threat = e.isSprinter ? 0.58 : e.speed ? 80 / e.speed : 1;
+      const score = dist * (los ? 1 : 1.7) * threat;
+      scored.push({ e, score });
+    }
+    scored.sort((a, b) => a.score - b.score);
+    return scored.slice(0, count).map(s => s.e);
   }
 
   _attack() {
@@ -358,6 +557,24 @@ export class Player {
       ctx.restore();
     }
 
+    for (const seg of this._ricochetTrail) {
+      if (seg.delay > 0) continue;
+      ctx.save();
+      ctx.lineCap = 'round';
+      ctx.globalAlpha = seg.a * 0.14;
+      ctx.strokeStyle = this.color;
+      ctx.lineWidth = 34;
+      ctx.beginPath(); ctx.moveTo(seg.x0, seg.y0); ctx.lineTo(seg.x1, seg.y1); ctx.stroke();
+      ctx.globalAlpha = seg.a * 0.42;
+      ctx.lineWidth = 13;
+      ctx.beginPath(); ctx.moveTo(seg.x0, seg.y0); ctx.lineTo(seg.x1, seg.y1); ctx.stroke();
+      ctx.globalAlpha = seg.a * 0.92;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(seg.x0, seg.y0); ctx.lineTo(seg.x1, seg.y1); ctx.stroke();
+      ctx.restore();
+    }
+
     ctx.save();
 
     // Damage flash: blink body during iframes (skip during rogue dash — trail sells it)
@@ -383,6 +600,8 @@ export class Player {
 
     ctx.restore();
 
+    if (this._lunging) this._drawLungeArc(ctx);
+
     // Crosshair over aim target (archer + rogue + sword)
     if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') && this._aimTarget?.alive) {
       this._drawCrosshair(ctx);
@@ -397,6 +616,16 @@ export class Player {
     const pct = this.hp / this.maxHp;
     ctx.fillStyle = pct > 0.5 ? '#4cff72' : pct > 0.25 ? '#ffd24c' : '#ff4c4c';
     ctx.fillRect(barX, barY, barW * pct, barH);
+
+    if (this._abilityMaxCooldown > 0) {
+      const ready = this._abilityCooldown <= 0;
+      const aw = 30, ah = 3;
+      const pctA = ready ? 1 : 1 - this._abilityCooldown / this._abilityMaxCooldown;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.fillRect(this.x - aw / 2, barY + 6, aw, ah);
+      ctx.fillStyle = ready ? this.color : 'rgba(255,255,255,0.45)';
+      ctx.fillRect(this.x - aw / 2, barY + 6, aw * Math.max(0, Math.min(1, pctA)), ah);
+    }
 
     // Nametag
     ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
@@ -413,5 +642,28 @@ export class Player {
     ctx.fillText(this.name, this.x, tagY);
 
     if (scaled) ctx.restore();
+  }
+
+  _drawLungeArc(ctx) {
+    const p = 1 - this._lungeTimer / this._lungeDuration;
+    const alpha = Math.sin(Math.max(0, Math.min(1, p)) * Math.PI);
+    const base = Math.atan2(this._lungeDirY, this._lungeDirX);
+    const arc = Math.PI * 0.92;
+    const start = base - arc / 2;
+    const end = base + arc / 2;
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = alpha * 0.18;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 34;
+    ctx.beginPath(); ctx.arc(this.x, this.y, 58, start, end); ctx.stroke();
+    ctx.globalAlpha = alpha * 0.52;
+    ctx.lineWidth = 13;
+    ctx.beginPath(); ctx.arc(this.x, this.y, 64, start, end); ctx.stroke();
+    ctx.globalAlpha = alpha * 0.95;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(this.x, this.y, 69, start, end); ctx.stroke();
+    ctx.restore();
   }
 }
