@@ -240,9 +240,9 @@ export class LobbyScene extends Scene {
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(`PLAYER ${i + 1}`, x + 20, y + 28);
 
-    const hint = i === 0 ? 'WASD + Q/E' : 'IJKL + U/P';
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.font = '12px "Trebuchet MS", sans-serif';
+    const hint = i === 0 ? 'W A S D  ·  Q / E' : 'I J K L  ·  U / P';
+    ctx.fillStyle = 'rgba(255,255,255,0.38)';
+    ctx.font = '11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'right';
     ctx.fillText(hint, x + CARD_W - 20, y + 28);
 
