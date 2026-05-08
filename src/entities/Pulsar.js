@@ -53,6 +53,7 @@ export class Pulsar {
   }
 
   _triggerExplosion() {
+    if (!this._shielded) return;     // relay must be alive to detonate
     if (this._explodeCd > 0) return;
     this._explodeCd = EXPLODE_CD;
     this._shockwaves.push({ r: 0, alpha: 1 });
