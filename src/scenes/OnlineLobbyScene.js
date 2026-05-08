@@ -289,7 +289,14 @@ export class OnlineLobbyScene extends Scene {
 
     // Copy code button
     if (this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
-      navigator.clipboard?.writeText(this._code).catch(() => {});
+      // Textarea trick — works unconditionally without clipboard-write permission
+      const ta = document.createElement('textarea');
+      ta.value = this._code;
+      Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0', pointerEvents: 'none' });
+      document.body.appendChild(ta);
+      ta.focus(); ta.select();
+      try { document.execCommand('copy'); } catch (_) {}
+      ta.remove();
       this._copyFeedback = 1.5; return;
     }
 
