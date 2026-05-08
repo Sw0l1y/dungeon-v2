@@ -232,7 +232,7 @@ export class NetSession {
       try { this.onMessage?.(JSON.parse(ev.data)); } catch {}
     };
     dc.onclose = () => {
-      if (this.status === 'connected') {
+      if (this.status === 'connected' || this.status === 'error') {
         this.status = 'disconnected';
         this.onDisconnected?.();
       }

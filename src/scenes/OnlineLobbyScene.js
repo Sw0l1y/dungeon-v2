@@ -60,10 +60,11 @@ export class OnlineLobbyScene extends Scene {
         ]
       : null;   // populated on first lobbySync
 
-    this._kicked       = false;   // client was removed by host
-    this._copyBtnRect  = null;
-    this._mouse        = { x: 0, y: 0 };
-    this._pendingClick = null;
+    this._kicked                = false;   // client was removed by host
+    this._disconnectVerifyTimer = 0;       // >0 while waiting to confirm a DC error is real
+    this._copyBtnRect           = null;
+    this._mouse                 = { x: 0, y: 0 };
+    this._pendingClick          = null;
 
     if (this._net) {
       this._net.onWaiting = () => {};
@@ -136,8 +137,9 @@ export class OnlineLobbyScene extends Scene {
       };
 
       this._net.onDisconnected = () => {
+        this._disconnectVerifyTimer = 0;   // cancel any pending verification
         this._connected = false;
-        this._error = 'Other device disconnected';
+        this._error = isHost ? 'Client disconnected' : 'Host disconnected';
         if (isHost && this._slots) {
           // Clear ALL remote slots so they can be re-used
           for (let i = 0; i < this._slots.length; i++) {
@@ -146,7 +148,17 @@ export class OnlineLobbyScene extends Scene {
         }
       };
 
-      this._net.onError = (m) => { this._error = m || 'Connection error'; };
+      this._net.onError = (m) => {
+        if (isHost && (m === 'DataChannel error' || !m)) {
+          // Start a short verification window. The DataChannel will close
+          // momentarily (triggering onDisconnected), which cancels the timer.
+          // The timer is a fallback in case the close event never fires.
+          this._error = 'Client connection lost…';
+          this._disconnectVerifyTimer = 4;
+        } else {
+          this._error = m || 'Connection error';
+        }
+      };
     }
 
     this._onMouseMove = (e) => {
@@ -250,6 +262,21 @@ export class OnlineLobbyScene extends Scene {
 
   update(dt) {
     if (this._copyFeedback > 0) this._copyFeedback -= dt;
+
+    // Disconnect verification timer — fires if onDisconnected hasn't cancelled it
+    if (this._disconnectVerifyTimer > 0) {
+      this._disconnectVerifyTimer -= dt;
+      if (this._disconnectVerifyTimer <= 0) {
+        this._disconnectVerifyTimer = 0;
+        this._connected = false;
+        this._error = 'Client disconnected';
+        if (this._slots) {
+          for (let i = 0; i < this._slots.length; i++) {
+            if (this._slots[i].isRemote) this._slots[i] = defaultSlot(i);
+          }
+        }
+      }
+    }
 
     // Host periodically pushes full state to client
     if (this._role === 'host') {
