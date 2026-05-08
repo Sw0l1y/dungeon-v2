@@ -126,9 +126,12 @@ export class OnlineWaitScene extends Scene {
 
     if (this._phase === 'joining') {
       if (this._hit(this._pasteBtn(W, H), pt)) {
-        // Focus the hidden input then trigger a native paste — no async permission needed
-        this._hiddenInput?.focus();
-        document.execCommand('paste');
+        // Read directly from the clipboard — works from a user-gesture (click)
+        navigator.clipboard?.readText()
+          .then(t => this._applyPaste(t))
+          .catch(() => {
+            // Permission denied: hidden input is already focused so Ctrl+V still works
+          });
       }
     }
   }
