@@ -1,6 +1,7 @@
 import { PULSAR_COLOR } from './Pulsar.js';
 
 const FLEE_DIST   = 190;  // preferred minimum distance from players
+const PULSAR_MIN  = 110;  // preferred minimum distance from Pulsar
 const PULSAR_PULL = 240;  // distance at which Pulsar pull becomes full strength
 
 export class Relay {
@@ -64,16 +65,23 @@ export class Relay {
       fleeDy = (dy / d) * weight;
     }
 
-    // ── Pulsar anchor: pull toward Pulsar, stronger when far away ─────────
+    // ── Pulsar anchor: pull toward Pulsar when far, push away when too close ─
     let pulsarDx = 0, pulsarDy = 0;
     if (this.pulsar?.alive) {
       const dx   = this.pulsar.x - this.x;
       const dy   = this.pulsar.y - this.y;
       const dist = Math.hypot(dx, dy) || 1;
-      // Pull ramps from 0 at close range to 2x at PULSAR_PULL distance
-      const pull = Math.min(2.2, dist / (PULSAR_PULL * 0.4));
-      pulsarDx = (dx / dist) * pull;
-      pulsarDy = (dy / dist) * pull;
+      if (dist < PULSAR_MIN) {
+        // Too close — push away, stronger the closer we are
+        const push = (1 - dist / PULSAR_MIN) * 2.5;
+        pulsarDx = -(dx / dist) * push;
+        pulsarDy = -(dy / dist) * push;
+      } else {
+        // Pull ramps from 0 at PULSAR_MIN to full at PULSAR_PULL
+        const pull = Math.min(2.2, (dist - PULSAR_MIN) / (PULSAR_PULL * 0.4));
+        pulsarDx = (dx / dist) * pull;
+        pulsarDy = (dy / dist) * pull;
+      }
     }
 
     // ── Combined movement direction ────────────────────────────────────────
