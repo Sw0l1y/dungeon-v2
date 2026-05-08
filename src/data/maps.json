@@ -1,5 +1,5 @@
 {
-  "mapVersion": "map-v1.2",
+  "mapVersion": "map-v1.3",
   "campaign": [
     {
       "id": "room-umnzn2v",
@@ -1013,7 +1013,7 @@
     },
     {
       "id": "room-4ychi84",
-      "name": "Room 2",
+      "name": "Facility 1",
       "cols": 30,
       "rows": 17,
       "tileSize": 40,
