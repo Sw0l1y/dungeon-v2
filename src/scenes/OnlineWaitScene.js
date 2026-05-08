@@ -25,6 +25,22 @@ export class OnlineWaitScene extends Scene {
     this._pendingClick  = null;
     this._pasteFeedback = 0;   // > 0 → show "Pasted!" briefly
 
+    // Hidden input used as a paste target — avoids clipboard-read permission
+    this._hiddenInput = document.createElement('input');
+    Object.assign(this._hiddenInput.style, {
+      position: 'fixed', top: '0', left: '0',
+      width: '1px', height: '1px',
+      opacity: '0', pointerEvents: 'none',
+    });
+    document.body.appendChild(this._hiddenInput);
+    this._onPaste = (e) => {
+      e.preventDefault();
+      if (this._phase === 'joining') {
+        this._applyPaste(e.clipboardData?.getData('text') ?? '');
+      }
+    };
+    this._hiddenInput.addEventListener('paste', this._onPaste);
+
     this._onMouseMove = (e) => {
       const r = this.game.canvas.getBoundingClientRect();
       this._mouse.x = (e.clientX - r.left) * (this.game.canvas.width  / r.width);
@@ -48,6 +64,11 @@ export class OnlineWaitScene extends Scene {
     this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
     this.game.canvas.removeEventListener('mousedown', this._onMouseDown);
     window.removeEventListener('keydown', this._onKeyDown);
+    if (this._hiddenInput) {
+      this._hiddenInput.removeEventListener('paste', this._onPaste);
+      this._hiddenInput.remove();
+      this._hiddenInput = null;
+    }
   }
 
   // ── Input ──────────────────────────────────────────────────────────────────
@@ -59,13 +80,9 @@ export class OnlineWaitScene extends Scene {
       return;
     }
     if (this._phase === 'joining') {
-      // Ctrl/Cmd+V — paste from clipboard
-      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'v') {
-        ev.preventDefault();
-        navigator.clipboard?.readText().then(t => this._applyPaste(t)).catch(() => {});
-        return;
-      }
       if (ev.key === 'Backspace') { this._typed = this._typed.slice(0, -1); return; }
+      // Ctrl/Cmd+V is handled by the hidden input's paste event automatically
+      if (ev.ctrlKey || ev.metaKey) return;
       const ch = ev.key.toUpperCase();
       if (CHARSET.includes(ch) && this._typed.length < 4) {
         this._typed += ch;
@@ -103,12 +120,15 @@ export class OnlineWaitScene extends Scene {
       }
       if (this._hit({ x: W / 2 + 20, y: H / 2 - 40, w: 190, h: 80 }, pt)) {
         this._phase = 'joining'; this._typed = '';
+        this._hiddenInput?.focus();
       }
     }
 
     if (this._phase === 'joining') {
       if (this._hit(this._pasteBtn(W, H), pt)) {
-        navigator.clipboard?.readText().then(t => this._applyPaste(t)).catch(() => {});
+        // Focus the hidden input then trigger a native paste — no async permission needed
+        this._hiddenInput?.focus();
+        document.execCommand('paste');
       }
     }
   }
