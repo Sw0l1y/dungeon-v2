@@ -1,9 +1,10 @@
 import { Scene            } from './Scene.js';
 import { OnlineLobbyScene } from './OnlineLobbyScene.js';
+import { TitleScene       } from './TitleScene.js';
 import { NetSession       } from '../systems/NetSession.js';
 
-// Charset with no ambiguous characters (0/O, 1/I/L)
-const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+// Letters only — no ambiguous 0/O, 1/I/L
+const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
 function makeCode() {
   let c = '';
@@ -53,6 +54,7 @@ export class OnlineWaitScene extends Scene {
   _handleKey(ev) {
     if (ev.key === 'Escape') {
       if (this._phase === 'joining') { this._phase = 'pick'; this._typed = ''; }
+      else { this.game.scenes.switch(new TitleScene(this.game)); }
       return;
     }
     if (this._phase === 'joining') {
@@ -157,7 +159,7 @@ export class OnlineWaitScene extends Scene {
     ctx.fillStyle = 'rgba(255,255,255,0.15)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('ESC  ·  back', W / 2, H - 22);
+    ctx.fillText('ESC  ·  back to title', W / 2, H - 22);
   }
 
   _drawJoining(ctx, W, H, t) {

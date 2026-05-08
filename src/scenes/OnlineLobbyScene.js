@@ -6,13 +6,11 @@ import { RemoteBinding   } from '../systems/RemoteBinding.js';
 const COLORS      = ['#8cf3ff', '#ff8c42', '#a8ff78', '#ff6b9d', '#c77dff', '#ffd166'];
 const COLOR_NAMES = ['Cyan',    'Orange',  'Green',   'Pink',    'Purple',  'Gold'   ];
 const MAX_NAME    = 12;
+const MAX_LOCAL   = 2;   // max local (non-remote) players per device
 
-// ── Grid layout (virtual canvas 1120×630) ─────────────────────────────────────
-// 2 × 2 grid.  Col 0 = host's slots.  Col 1 = client's slots.
-// Row 0 = primary (always filled once connected).  Row 1 = optional secondary.
-//
-//   [P1 – host primary ]  [P2 – client primary ]
-//   [P3 – host optional]  [P4 – client optional]
+// ── Grid layout (virtual canvas 1120×630) ────────────────────────────────────
+//   [P1]  [P2]
+//   [P3]  [P4]
 //
 const CARD_W = 238;
 const CARD_H = 195;
@@ -20,6 +18,10 @@ const GAP_X  = 20;
 const GAP_Y  = 16;
 const GRID_X = (1120 - 2 * CARD_W - GAP_X) / 2;  // 312
 const GRID_Y = 105;
+
+function defaultSlot(idx) {
+  return { active: false, name: `Player ${idx + 1}`, colorIdx: idx % COLORS.length, isRemote: false };
+}
 
 export class OnlineLobbyScene extends Scene {
 
@@ -33,53 +35,79 @@ export class OnlineLobbyScene extends Scene {
     this._error     = '';
     this._copyFeedback = 0;
     this._syncTimer    = 0;
-    this._editingSlot  = null;   // 0 | 1 | null  (index into _mySlots)
+    this._editingSlot  = null;   // slot index 0-3 or null
 
     const isHost = this._role === 'host';
 
-    // Each device controls its column:
-    //   host  → col 0 → P1 (slot 0) and P3 (slot 1, optional)
-    //   client → col 1 → P2 (slot 0) and P4 (slot 1, optional)
-    this._mySlots = [
-      { active: true,  name: isHost ? 'Player 1' : 'Player 2', colorIdx: isHost ? 0 : 1 },
-      { active: false, name: isHost ? 'Player 3' : 'Player 4', colorIdx: isHost ? 2 : 3 },
-    ];
-    this._remoteSlots = null;    // [{active,name,colorIdx}×2] or null = not yet received
+    // Host owns all slots from the start; client waits for the first lobbySync
+    this._slots = isHost
+      ? [
+          { active: true,  name: 'Player 1', colorIdx: 0, isRemote: false },
+          { active: false, name: 'Player 2', colorIdx: 1, isRemote: false },
+          { active: false, name: 'Player 3', colorIdx: 2, isRemote: false },
+          { active: false, name: 'Player 4', colorIdx: 3, isRemote: false },
+        ]
+      : null;   // populated on first lobbySync
 
+    this._copyBtnRect  = null;
     this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
 
     if (this._net) {
-      // Host: server confirmed role – grid already visible, nothing extra needed
       this._net.onWaiting = () => {};
 
       // DataChannel open
       this._net.onConnected = () => {
         this._connected = true;
-        this._syncLobby();
+        if (isHost) {
+          // Auto-place the joining client in the first empty slot
+          const emptyIdx = this._slots.findIndex(s => !s.active);
+          if (emptyIdx !== -1) {
+            this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: emptyIdx % COLORS.length, isRemote: true };
+          }
+          this._syncLobby();
+        }
       };
 
       this._net.onMessage = (data) => {
-        if (data.t === 'lobbySync' && Array.isArray(data.s)) {
-          this._remoteSlots = data.s.map(sd =>
-            sd ? { active: !!sd.a, name: sd.n, colorIdx: sd.c } : null,
-          );
-        }
-        // Host tells client to launch; includes final host config
-        if (data.t === 'lobbyStart' && this._role === 'client') {
-          if (Array.isArray(data.hc)) {
-            this._remoteSlots = data.hc.map(sd =>
-              sd ? { active: true, name: sd.n, colorIdx: sd.c } : null,
+        if (isHost) {
+          // Client updating their slot's name / color
+          if (data.t === 'clientUpdate') {
+            const ri = this._findRemoteIdx();
+            if (ri !== -1) {
+              if (typeof data.n === 'string') this._slots[ri].name     = data.n;
+              if (typeof data.c === 'number') this._slots[ri].colorIdx = data.c;
+            }
+          }
+        } else {
+          // Full state snapshot from host
+          if (data.t === 'lobbySync' && Array.isArray(data.s)) {
+            this._slots = data.s.map((sd, i) => sd
+              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r }
+              : defaultSlot(i)
             );
           }
-          this._doLaunch();
+          // Host launched — apply final state and go
+          if (data.t === 'lobbyStart' && Array.isArray(data.s)) {
+            this._slots = data.s.map((sd, i) => sd
+              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r }
+              : defaultSlot(i)
+            );
+            this._doLaunch();
+          }
         }
       };
 
       this._net.onDisconnected = () => {
         this._connected = false;
-        this._remoteSlots = null;
         this._error = 'Other device disconnected';
+        if (isHost && this._slots) {
+          // Clear the remote slot so it can be re-used
+          const ri = this._findRemoteIdx();
+          if (ri !== -1) {
+            this._slots[ri] = defaultSlot(ri);
+          }
+        }
       };
 
       this._net.onError = (m) => { this._error = m || 'Connection error'; };
@@ -105,16 +133,20 @@ export class OnlineLobbyScene extends Scene {
   onExit() {
     this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
     this.game.canvas.removeEventListener('mousedown', this._onMouseDown);
-    // Don't close net – ClassScene / GameScene still need it
+    // Don't close net — ClassScene / GameScene still need it
+  }
+
+  _findRemoteIdx() {
+    return this._slots?.findIndex(s => s.isRemote) ?? -1;
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────
 
   _syncLobby() {
-    if (!this._net || !this._connected) return;
+    if (!this._net || !this._connected || this._role !== 'host') return;
     this._net.send({
       t: 'lobbySync',
-      s: this._mySlots.map(s => ({ a: s.active ? 1 : 0, n: s.name, c: s.colorIdx })),
+      s: this._slots.map(s => ({ a: s.active ? 1 : 0, n: s.name, c: s.colorIdx, r: s.isRemote ? 1 : 0 })),
     });
   }
 
@@ -126,17 +158,6 @@ export class OnlineLobbyScene extends Scene {
       y: GRID_Y + Math.floor(idx / 2) * (CARD_H + GAP_Y),
       w: CARD_W, h: CARD_H,
     };
-  }
-
-  // col 0 = host, col 1 = client
-  _isMyCard(idx)  { return this._role === 'host' ? idx % 2 === 0 : idx % 2 === 1; }
-  _mySlotOf(idx)  { return Math.floor(idx / 2); }   // 0 = primary, 1 = secondary
-
-  _slotData(idx) {
-    const si = this._mySlotOf(idx);
-    return this._isMyCard(idx)
-      ? this._mySlots[si]
-      : (this._remoteSlots?.[si] ?? null);
   }
 
   _playerLabel(idx) { return `P${idx + 1}`; }
@@ -151,9 +172,9 @@ export class OnlineLobbyScene extends Scene {
 
   _colorSwatch(card, ci) {
     const sw = 28, sh = 28, gap = 6, cols = 3;
-    const gridW = cols * sw + (cols - 1) * gap;   // 96
-    const gx    = card.x + (card.w - gridW) / 2;
-    const gy    = card.y + 110;
+    const gridW = cols * sw + (cols - 1) * gap;
+    const gx = card.x + (card.w - gridW) / 2;
+    const gy = card.y + 110;
     return {
       x: gx + (ci % cols) * (sw + gap),
       y: gy + Math.floor(ci / cols) * (sh + gap),
@@ -165,6 +186,10 @@ export class OnlineLobbyScene extends Scene {
     return { x: card.x + 24, y: card.y + CARD_H / 2 - 22, w: card.w - 48, h: 44 };
   }
 
+  _removeBtn(card) {
+    return { x: card.x + card.w - 32, y: card.y + 8, w: 22, h: 22 };
+  }
+
   _startBtn() {
     const W = this.game.canvas.width;
     const y = GRID_Y + 2 * CARD_H + GAP_Y + 14;
@@ -172,8 +197,8 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _backBtn() {
-    const W = this.game.canvas.width;
     const H = this.game.canvas.height;
+    const W = this.game.canvas.width;
     return { x: W / 2 - 55, y: H - 46, w: 110, h: 30 };
   }
 
@@ -182,19 +207,15 @@ export class OnlineLobbyScene extends Scene {
   update(dt) {
     if (this._copyFeedback > 0) this._copyFeedback -= dt;
 
-    this._syncTimer += dt;
-    if (this._syncTimer >= 0.5) { this._syncTimer = 0; this._syncLobby(); }
+    // Host periodically pushes full state to client
+    if (this._role === 'host') {
+      this._syncTimer += dt;
+      if (this._syncTimer >= 0.5) { this._syncTimer = 0; this._syncLobby(); }
+    }
 
     const input = this.game.input;
     const click  = this._pendingClick;
     this._pendingClick = null;
-
-    // V: toggle my secondary slot
-    if (input.justPressed('KeyV')) {
-      this._mySlots[1].active = !this._mySlots[1].active;
-      if (!this._mySlots[1].active && this._editingSlot === 1) this._editingSlot = null;
-      this._syncLobby();
-    }
 
     // Escape: stop editing or go back
     if (input.justPressed('Escape')) {
@@ -204,22 +225,25 @@ export class OnlineLobbyScene extends Scene {
 
     // Name typing
     if (this._editingSlot !== null) {
-      let changed = false;
-      for (const ch of input.chars) {
-        if (this._mySlots[this._editingSlot].name.length < MAX_NAME) {
-          this._mySlots[this._editingSlot].name += ch; changed = true;
+      const slot = this._slots?.[this._editingSlot];
+      if (slot) {
+        let changed = false;
+        for (const ch of input.chars) {
+          if (slot.name.length < MAX_NAME) { slot.name += ch; changed = true; }
+        }
+        if (input.justPressed('Backspace')) {
+          slot.name = slot.name.slice(0, -1); changed = true;
+        }
+        if (changed) {
+          if (this._role === 'host') this._syncLobby();
+          else this._net?.send({ t: 'clientUpdate', n: slot.name });
         }
       }
-      if (input.justPressed('Backspace')) {
-        this._mySlots[this._editingSlot].name = this._mySlots[this._editingSlot].name.slice(0, -1);
-        changed = true;
-      }
-      if (changed) this._syncLobby();
       if (input.justPressed('Enter')) { this._editingSlot = null; return; }
     }
 
-    // Host Enter: launch
-    if (this._editingSlot === null && this._role === 'host' && this._connected && this._remoteSlots) {
+    // Host Enter = launch
+    if (this._editingSlot === null && this._role === 'host') {
       if (input.justPressed('Enter')) { this._hostStart(); return; }
     }
 
@@ -227,42 +251,65 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _handleClick(pt) {
-    // Back
+    // Back button
     if (this._hit(this._backBtn(), pt)) { this._goBack(); return; }
 
-    // Copy code (host) — _copyBtnRect is set during draw()
-    if (this._role === 'host' && this._code && this._copyBtnRect) {
-      if (this._hit(this._copyBtnRect, pt)) {
-        navigator.clipboard?.writeText(this._code).catch(() => {});
-        this._copyFeedback = 1.5; return;
-      }
+    // Copy code button
+    if (this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
+      navigator.clipboard?.writeText(this._code).catch(() => {});
+      this._copyFeedback = 1.5; return;
     }
 
-    // START (host)
-    if (this._role === 'host' && this._connected && this._remoteSlots) {
-      if (this._hit(this._startBtn(), pt)) { this._hostStart(); return; }
+    const isHost = this._role === 'host';
+
+    // START (host only — any active slot is enough)
+    if (isHost && this._slots?.some(s => s.active) && this._hit(this._startBtn(), pt)) {
+      this._hostStart(); return;
     }
 
-    // Card interactions — only own cards
+    const slots = this._slots;
+    if (!slots) return;
+
     for (let idx = 0; idx < 4; idx++) {
-      if (!this._isMyCard(idx)) continue;
-      const si   = this._mySlotOf(idx);
-      const slot = this._mySlots[si];
+      const slot = slots[idx];
       const card = this._cardRect(idx);
 
       if (slot.active) {
-        // Name field
-        if (this._hit(this._nameField(card), pt)) { this._editingSlot = si; return; }
-        // Color swatches
+        // ── Remove (host only) ──────────────────────────────────────────────
+        if (isHost && this._hit(this._removeBtn(card), pt)) {
+          slot.active   = false;
+          slot.isRemote = false;
+          if (this._editingSlot === idx) this._editingSlot = null;
+          this._syncLobby();
+          return;
+        }
+
+        // ── Edit: host→local slots; client→their remote slot ───────────────
+        const canEdit = isHost ? !slot.isRemote : slot.isRemote;
+        if (!canEdit) continue;
+
+        if (this._hit(this._nameField(card), pt)) { this._editingSlot = idx; return; }
+
         for (let ci = 0; ci < COLORS.length; ci++) {
           if (this._hit(this._colorSwatch(card, ci), pt)) {
-            slot.colorIdx = ci; this._syncLobby(); return;
+            slot.colorIdx = ci;
+            if (isHost) this._syncLobby();
+            else this._net?.send({ t: 'clientUpdate', c: ci });
+            return;
           }
         }
+
       } else {
-        // Add button (secondary only)
-        if (si === 1 && this._hit(this._addBtn(card), pt)) {
-          slot.active = true; this._syncLobby(); return;
+        // ── Add player (host only, max 2 local) ────────────────────────────
+        if (isHost && this._hit(this._addBtn(card), pt)) {
+          const localCount = slots.filter(s => s.active && !s.isRemote).length;
+          if (localCount < MAX_LOCAL) {
+            slot.active   = true;
+            slot.isRemote = false;
+            slot.name     = `Player ${idx + 1}`;
+            this._syncLobby();
+          }
+          return;
         }
       }
     }
@@ -283,44 +330,44 @@ export class OnlineLobbyScene extends Scene {
   // ── Launch ─────────────────────────────────────────────────────────────────
 
   _hostStart() {
-    const myConfig = this._mySlots.map(s => s.active ? { n: s.name, c: s.colorIdx } : null);
-    this._net?.send({ t: 'lobbyStart', hc: myConfig });
+    if (!this._slots?.some(s => s.active)) return;
+    const payload = this._slots.map(s => ({
+      a: s.active ? 1 : 0, n: s.name, c: s.colorIdx, r: s.isRemote ? 1 : 0,
+    }));
+    this._net?.send({ t: 'lobbyStart', s: payload });
     this._doLaunch();
   }
 
   _doLaunch() {
     const isHost = this._role === 'host';
+    const slots  = this._slots ?? [];
 
-    const toPlayerConfig = (slots) =>
-      (slots ?? []).filter(s => s?.active).map(s => ({ name: s.name, color: COLORS[s.colorIdx] }));
+    // Host-local: active and not remote
+    const hostSlots   = slots.filter(s => s?.active && !s.isRemote);
+    // Client-local: active and remote (from host's perspective)
+    const clientSlots = slots.filter(s => s?.active &&  s.isRemote);
 
-    const myConfig     = toPlayerConfig(this._mySlots);
-    const remoteConfig = toPlayerConfig(this._remoteSlots);
-
-    const hostConfig   = isHost ? myConfig   : remoteConfig;
-    const clientConfig = isHost ? remoteConfig : myConfig;
-
-    const remoteCount    = isHost ? clientConfig.length : hostConfig.length;
-    const remoteBindings = Array.from({ length: remoteCount }, () => new RemoteBinding());
     const localBindings  = [this.game.bindings.player1, this.game.bindings.player2];
+    const remoteCount    = isHost ? clientSlots.length : hostSlots.length;
+    const remoteBindings = Array.from({ length: remoteCount }, () => new RemoteBinding());
 
     let players;
     if (isHost) {
       players = [
-        ...hostConfig.map((p, i)   => ({ name: p.name, color: p.color, binding: localBindings[i] })),
-        ...clientConfig.map((p, i) => ({ name: p.name, color: p.color, binding: remoteBindings[i], remote: true, classId: 'sword' })),
+        ...hostSlots.map((s, i)   => ({ name: s.name, color: COLORS[s.colorIdx], binding: localBindings[i] })),
+        ...clientSlots.map((s, i) => ({ name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[i], remote: true, classId: 'sword' })),
       ];
     } else {
       players = [
-        ...hostConfig.map((p, i)   => ({ name: p.name, color: p.color, binding: remoteBindings[i], remote: true, classId: 'sword' })),
-        ...clientConfig.map((p, i) => ({ name: p.name, color: p.color, binding: localBindings[i] })),
+        ...hostSlots.map((s, i)   => ({ name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[i], remote: true, classId: 'sword' })),
+        ...clientSlots.map((s, i) => ({ name: s.name, color: COLORS[s.colorIdx], binding: localBindings[i] })),
       ];
     }
 
     this.game.state.players           = players;
     this.game.state.remoteBindings    = remoteBindings;
-    this.game.state.hostPlayerCount   = hostConfig.length;
-    this.game.state.clientPlayerCount = clientConfig.length;
+    this.game.state.hostPlayerCount   = hostSlots.length;
+    this.game.state.clientPlayerCount = clientSlots.length;
 
     this.game.scenes.switch(new ClassScene(this.game));
   }
@@ -335,72 +382,115 @@ export class OnlineLobbyScene extends Scene {
 
     const isHost = this._role === 'host';
 
-    // ── Title ────────────────────────────────────────────────────────────────
+    // ── Header ────────────────────────────────────────────────────────────────
     ctx.fillStyle = '#8cf3ff';
-    ctx.font = 'bold 34px "Trebuchet MS", sans-serif';
+    ctx.font = 'bold 28px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('ONLINE LOBBY', W / 2, 50);
+    ctx.fillText('ONLINE LOBBY', W / 2, 38);
 
-    // ── Room code + copy button ────────────────────────────────────────────
-    if (isHost && this._code) {
-      const cp   = this._codeCopyBtn();
-      const ctxt = `Room: ${this._code}`;
-      ctx.font = '13px "Trebuchet MS", sans-serif';
-      const tw = ctx.measureText(ctxt).width;
+    this._drawCodeRow(ctx, W, t);
 
-      const gap    = 8;
-      const totalW = tw + gap + cp.w;
-      const startX = W / 2 - totalW / 2;
-
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(ctxt, startX, 78);
-
-      const btnX = startX + tw + gap;
-      const copied = this._copyFeedback > 0;
-      const cpHov  = !copied && this._hit(cp, this._mouse);
-      ctx.fillStyle = copied ? 'rgba(100,255,140,0.18)' : cpHov ? 'rgba(140,243,255,0.18)' : 'rgba(140,243,255,0.07)';
-      ctx.beginPath(); ctx.roundRect(btnX, cp.y, cp.w, cp.h, 5); ctx.fill();
-      ctx.strokeStyle = copied ? 'rgba(100,255,140,0.55)' : cpHov ? '#8cf3ff' : 'rgba(140,243,255,0.28)';
-      ctx.lineWidth = 1;
-      ctx.beginPath(); ctx.roundRect(btnX, cp.y, cp.w, cp.h, 5); ctx.stroke();
-      ctx.fillStyle = copied ? 'rgba(100,255,160,0.9)' : cpHov ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
-      ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(copied ? '✓ Copied!' : 'COPY', btnX + cp.w / 2, cp.y + cp.h / 2);
-
-      // Store actual button position for hit-testing
-      this._copyBtnRect = { x: btnX, y: cp.y, w: cp.w, h: cp.h };
-    }
-
-    // ── Error banner ──────────────────────────────────────────────────────
     if (this._error) {
       ctx.fillStyle = '#ff7070';
       ctx.font = '12px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(this._error, W / 2, 79);
+      ctx.fillText(this._error, W / 2, 95);
     }
 
-    // ── Player labels above each column ───────────────────────────────────
-    // (Not strictly necessary since each card shows P1–P4, but column headers help)
-
-    // ── Grid ─────────────────────────────────────────────────────────────
-    for (let idx = 0; idx < 4; idx++) {
-      this._drawCard(ctx, idx, t);
+    // ── Client awaiting first sync ─────────────────────────────────────────
+    if (!isHost && !this._slots) {
+      this._drawCenteredSpinner(ctx, W, H, t);
+      this._drawBackBtn(ctx);
+      return;
     }
 
-    // ── START or waiting text ─────────────────────────────────────────────
+    // ── Grid ──────────────────────────────────────────────────────────────
+    for (let idx = 0; idx < 4; idx++) this._drawCard(ctx, idx, t);
+
+    // ── Start / waiting ───────────────────────────────────────────────────
     const sb = this._startBtn();
     if (isHost) {
       this._drawStartBtn(ctx, W, t);
-    } else if (this._connected) {
+    } else {
       ctx.fillStyle = 'rgba(140,243,255,0.5)';
       ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText('Waiting for host to start...', W / 2, sb.y + sb.h / 2);
     }
 
-    // ── Back button ───────────────────────────────────────────────────────
+    // ── Back + hint ───────────────────────────────────────────────────────
+    this._drawBackBtn(ctx);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '12px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    const hint = this._editingSlot !== null
+      ? 'Type name  •  Enter to confirm'
+      : isHost
+        ? 'Click slot to add  •  × to remove  •  Enter to start'
+        : 'Click your name or color to customize';
+    ctx.fillText(hint, W / 2, H - 8);
+  }
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  _drawCodeRow(ctx, W, _t) {
+    if (!this._code) return;
+    const isHost = this._role === 'host';
+    const cy = 72;
+
+    if (isHost) {
+      const ctxt = `Room: ${this._code}`;
+      ctx.font = '13px "Trebuchet MS", sans-serif';
+      const tw = ctx.measureText(ctxt).width;
+      const cpW = 68, cpH = 24, gap = 8;
+      const sx = W / 2 - (tw + gap + cpW) / 2;
+
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(ctxt, sx, cy);
+
+      const btnX   = sx + tw + gap;
+      const copied = this._copyFeedback > 0;
+      const cpHov  = !copied && this._hit({ x: btnX, y: cy - cpH / 2, w: cpW, h: cpH }, this._mouse);
+
+      ctx.fillStyle = copied ? 'rgba(100,255,140,0.18)' : cpHov ? 'rgba(140,243,255,0.18)' : 'rgba(140,243,255,0.07)';
+      ctx.beginPath(); ctx.roundRect(btnX, cy - cpH / 2, cpW, cpH, 5); ctx.fill();
+      ctx.strokeStyle = copied ? 'rgba(100,255,140,0.55)' : cpHov ? '#8cf3ff' : 'rgba(140,243,255,0.28)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(btnX, cy - cpH / 2, cpW, cpH, 5); ctx.stroke();
+      ctx.fillStyle = copied ? 'rgba(100,255,160,0.9)' : cpHov ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
+      ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(copied ? '✓ Copied!' : 'COPY', btnX + cpW / 2, cy);
+
+      this._copyBtnRect = { x: btnX, y: cy - cpH / 2, w: cpW, h: cpH };
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.font = '13px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(`Room: ${this._code}`, W / 2, cy);
+    }
+  }
+
+  _drawCenteredSpinner(ctx, W, H, _t) {
+    const cx   = W / 2;
+    const cy   = H / 2 - 20;
+    const spin = ((Date.now() / 1000) * Math.PI * 2) % (Math.PI * 2);
+
+    ctx.strokeStyle = 'rgba(140,243,255,0.5)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 18, spin, spin + Math.PI * 1.4);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.4)';
+    ctx.font = '14px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('Connecting to host...', cx, cy + 36);
+  }
+
+  _drawBackBtn(ctx) {
     const back    = this._backBtn();
     const backHov = this._hit(back, this._mouse);
     ctx.fillStyle = backHov ? 'rgba(255,255,255,0.1)' : 'transparent';
@@ -412,51 +502,28 @@ export class OnlineLobbyScene extends Scene {
     ctx.font = '12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('← Back  (ESC)', back.x + back.w / 2, back.y + back.h / 2);
-
-    // ── Bottom hint ───────────────────────────────────────────────────────
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    ctx.font = '12px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText(
-      this._editingSlot !== null
-        ? 'Type name  •  Enter to confirm'
-        : 'Click name to edit  •  V to add/remove your second player',
-      W / 2, H - 8,
-    );
   }
 
-  // Returns a template rect for the copy button (x is recalculated at draw time based on text width)
-  _codeCopyBtn() {
-    return { x: 0, y: 68, w: 68, h: 24 };  // x is overridden at draw time
-  }
+  _drawStartBtn(ctx, W, _t) {
+    const hasPlayers = this._slots?.some(s => s.active) ?? false;
+    const btn  = this._startBtn();
+    const hov  = hasPlayers && this._hit(btn, this._mouse);
 
-  _drawStartBtn(ctx, W, t) {
-    const ready = this._connected && !!this._remoteSlots;
-    const btn   = this._startBtn();
-    const hov   = ready && this._hit(btn, this._mouse);
-
-    ctx.fillStyle = ready
+    ctx.fillStyle = hasPlayers
       ? (hov ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)')
       : 'rgba(255,255,255,0.04)';
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.fill();
-    ctx.strokeStyle = ready
+    ctx.strokeStyle = hasPlayers
       ? (hov ? '#8cf3ff' : 'rgba(140,243,255,0.3)')
       : 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = ready && hov ? 2 : 1;
+    ctx.lineWidth = hasPlayers && hov ? 2 : 1;
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.stroke();
-    ctx.fillStyle = ready ? (hov ? '#8cf3ff' : 'rgba(255,255,255,0.6)') : 'rgba(255,255,255,0.2)';
+    ctx.fillStyle = hasPlayers ? (hov ? '#8cf3ff' : 'rgba(255,255,255,0.6)') : 'rgba(255,255,255,0.2)';
     ctx.font = 'bold 17px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('START GAME', btn.x + btn.w / 2, btn.y + btn.h / 2);
 
-    if (!ready) {
-      ctx.fillStyle = 'rgba(255,255,255,0.22)';
-      ctx.font = '12px "Trebuchet MS", sans-serif';
-      ctx.fillText(
-        !this._connected ? 'Waiting for player to join...' : 'Waiting for other device...',
-        W / 2, btn.y + btn.h + 14,
-      );
-    } else {
+    if (hasPlayers) {
       ctx.fillStyle = 'rgba(255,255,255,0.2)';
       ctx.font = '12px "Trebuchet MS", sans-serif';
       ctx.fillText('or press Enter', W / 2, btn.y + btn.h + 14);
@@ -466,76 +533,19 @@ export class OnlineLobbyScene extends Scene {
   // ── Card drawing ───────────────────────────────────────────────────────────
 
   _drawCard(ctx, idx, t) {
-    const isMine = this._isMyCard(idx);
-    const si     = this._mySlotOf(idx);
-    const slot   = this._slotData(idx);
+    const slot   = this._slots?.[idx];
     const card   = this._cardRect(idx);
-
-    // Primary remote slot before connection = connecting spinner
-    if (!isMine && si === 0 && !this._connected) {
-      this._drawConnectingCard(ctx, card, idx, t); return;
-    }
+    const isHost = this._role === 'host';
 
     if (!slot || !slot.active) {
-      if (isMine && si === 1) this._drawAddCard(ctx, card, idx);
-      else                    this._drawEmptyCard(ctx, card, idx);
+      if (isHost) this._drawAddCard(ctx, card, idx);
+      else        this._drawEmptyCard(ctx, card, idx);
       return;
     }
 
-    this._drawActiveCard(ctx, card, idx, slot, isMine);
-  }
-
-  _drawConnectingCard(ctx, card, _idx, t) {
-    const { x, y, w, h } = card;
-    const spin = ((Date.now() / 1000) * Math.PI * 2) % (Math.PI * 2);
-
-    ctx.fillStyle = 'rgba(140,243,255,0.03)';
-    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(140,243,255,0.12)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
-
-    // Label
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(this._playerLabel(this._role === 'host' ? 1 : 0), x + 14, y + 20);
-
-    // Divider
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
-
-    // Spinner
-    ctx.strokeStyle = 'rgba(140,243,255,0.45)';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(x + w / 2, y + h / 2 - 12, 14, spin, spin + Math.PI * 1.4);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(255,255,255,0.35)';
-    ctx.font = '12px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    const msg = this._role === 'host' ? 'Waiting for player...' : 'Connecting...';
-    ctx.fillText(msg, x + w / 2, y + h / 2 + 12);
-
-    // Show code in the waiting card (host only, since they need to share it)
-    if (this._role === 'host' && this._code) {
-      for (let i = 0; i < 4; i++) {
-        const bx = x + (w - (4 * 30 + 3 * 6)) / 2 + i * 36;
-        const by = y + h - 46;
-        const pulse = 0.12 + 0.06 * Math.sin(Date.now() / 400);
-        ctx.fillStyle = `rgba(140,243,255,${pulse})`;
-        ctx.beginPath(); ctx.roundRect(bx, by, 30, 34, 6); ctx.fill();
-        ctx.strokeStyle = 'rgba(140,243,255,0.35)';
-        ctx.lineWidth = 1;
-        ctx.beginPath(); ctx.roundRect(bx, by, 30, 34, 6); ctx.stroke();
-        ctx.fillStyle = '#8cf3ff';
-        ctx.font = 'bold 18px "Trebuchet MS", monospace';
-        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-        ctx.fillText(this._code[i] ?? '', bx + 15, by + 17);
-      }
-    }
+    // canEdit: host edits local (non-remote) slots; client edits their remote slot
+    const canEdit = isHost ? !slot.isRemote : slot.isRemote;
+    this._drawActiveCard(ctx, card, idx, slot, canEdit);
   }
 
   _drawEmptyCard(ctx, card, idx) {
@@ -563,12 +573,21 @@ export class OnlineLobbyScene extends Scene {
 
   _drawAddCard(ctx, card, idx) {
     const { x, y, w, h } = card;
+    const localCount = this._slots.filter(s => s.active && !s.isRemote).length;
+    const atLimit    = localCount >= MAX_LOCAL;
+
+    // When host is already at 2 local players, remaining slots look just like empty cards
+    if (atLimit) {
+      this._drawEmptyCard(ctx, card, idx);
+      return;
+    }
+
     const btn = this._addBtn(card);
     const hov = this._hit(btn, this._mouse);
 
     ctx.fillStyle = 'rgba(140,243,255,0.03)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(140,243,255,0.1)';
+    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)';
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
 
@@ -590,42 +609,59 @@ export class OnlineLobbyScene extends Scene {
     ctx.fillStyle = hov ? '#8cf3ff' : 'rgba(255,255,255,0.5)';
     ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('+ Add Player', x + w / 2, btn.y + btn.h / 2 - 7);
-    ctx.fillStyle = 'rgba(255,255,255,0.25)';
-    ctx.font = '11px "Trebuchet MS", sans-serif';
-    ctx.fillText('or press  V', x + w / 2, btn.y + btn.h / 2 + 10);
+    ctx.fillText('+ Add Player', x + w / 2, btn.y + btn.h / 2);
   }
 
-  _drawActiveCard(ctx, card, idx, slot, isMine) {
+  _drawActiveCard(ctx, card, idx, slot, canEdit) {
     const { x, y, w, h } = card;
-    const color     = COLORS[slot.colorIdx];
-    const mySlotIdx = this._mySlotOf(idx);
+    const isHost = this._role === 'host';
+    const color  = COLORS[slot.colorIdx];
 
-    // Card bg — mine slightly brighter
-    ctx.fillStyle = isMine ? 'rgba(140,243,255,0.07)' : 'rgba(140,243,255,0.04)';
+    // Background
+    ctx.fillStyle = canEdit ? 'rgba(140,243,255,0.07)' : 'rgba(140,243,255,0.04)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = isMine ? (color + 'aa') : 'rgba(140,243,255,0.18)';
-    ctx.lineWidth = isMine ? 1.5 : 1;
+    ctx.strokeStyle = canEdit ? (color + 'aa') : 'rgba(140,243,255,0.18)';
+    ctx.lineWidth = canEdit ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
 
-    // Player label
+    // P# label (left)
     ctx.fillStyle = color;
     ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
 
-    // Right-side badge
-    if (isMine) {
-      const hint = mySlotIdx === 0 ? 'WASD + Q/E' : 'IJKL + U/P';
-      ctx.fillStyle = 'rgba(255,255,255,0.2)';
-      ctx.font = '10px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText(hint, x + w - 12, y + 20);
-    } else {
+    // Right badge — shift left to clear × button on host view
+    const badgeRight = x + w - (isHost ? 40 : 12);
+    if (slot.isRemote) {
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'right';
-      ctx.fillText('other device', x + w - 12, y + 20);
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText('online', badgeRight, y + 20);
+    } else {
+      const localSlots = (this._slots ?? []).filter(s => s.active && !s.isRemote);
+      const li = localSlots.indexOf(slot);
+      const hint = li === 0 ? 'WASD+Q/E' : li === 1 ? 'IJKL+U/P' : '';
+      if (hint) {
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.font = '10px "Trebuchet MS", sans-serif';
+        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        ctx.fillText(hint, badgeRight, y + 20);
+      }
+    }
+
+    // ── Remove button (host only) ──────────────────────────────────────────
+    if (isHost) {
+      const rb  = this._removeBtn(card);
+      const hov = this._hit(rb, this._mouse);
+      ctx.fillStyle = hov ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.06)';
+      ctx.beginPath(); ctx.roundRect(rb.x, rb.y, rb.w, rb.h, 4); ctx.fill();
+      ctx.strokeStyle = hov ? 'rgba(255,100,100,0.7)' : 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(rb.x, rb.y, rb.w, rb.h, 4); ctx.stroke();
+      ctx.fillStyle = hov ? '#ff6060' : 'rgba(255,255,255,0.4)';
+      ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('×', rb.x + rb.w / 2, rb.y + rb.h / 2);
     }
 
     // Divider
@@ -633,10 +669,10 @@ export class OnlineLobbyScene extends Scene {
     ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
 
-    if (isMine) {
-      // ── Editable ────────────────────────────────────────────────────────
+    if (canEdit) {
+      // ── Editable name field ─────────────────────────────────────────────
       const nf      = this._nameField(card);
-      const editing = this._editingSlot === mySlotIdx;
+      const editing = this._editingSlot === idx;
       const nfHov   = !editing && this._hit(nf, this._mouse);
 
       ctx.fillStyle = editing ? 'rgba(140,243,255,0.12)' : nfHov ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)';
@@ -651,13 +687,12 @@ export class OnlineLobbyScene extends Scene {
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText(slot.name + cursor, nf.x + 8, nf.y + nf.h / 2);
 
-      // Color label
+      // Color section
       ctx.fillStyle = 'rgba(255,255,255,0.28)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText('COLOR', x + 14, y + 100);
 
-      // Color swatches
       for (let ci = 0; ci < COLORS.length; ci++) {
         const s   = this._colorSwatch(card, ci);
         const sel = slot.colorIdx === ci;
@@ -677,14 +712,13 @@ export class OnlineLobbyScene extends Scene {
         }
       }
 
-      // Color name below swatches
       ctx.fillStyle = 'rgba(255,255,255,0.32)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(COLOR_NAMES[slot.colorIdx], x + w / 2, y + 182);
 
     } else {
-      // ── Read-only remote ─────────────────────────────────────────────────
+      // ── Read-only display ───────────────────────────────────────────────
       ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(x + 22, y + 62, 7, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
