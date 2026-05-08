@@ -336,9 +336,7 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _backBtn() {
-    const H = this.game.canvas.height;
-    const W = this.game.canvas.width;
-    return { x: W / 2 - 55, y: H - 46, w: 110, h: 30 };
+    return { x: 14, y: 12, w: 110, h: 28 };
   }
 
   // ── Update ────────────────────────────────────────────────────────────────
