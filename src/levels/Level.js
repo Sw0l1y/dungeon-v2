@@ -179,7 +179,7 @@ export class Level {
     const col = Math.floor(x / ts);
     const row = Math.floor(y / ts);
     if (row < 0 || row >= this.map.length || col < 0 || col >= this.map[0].length) return true;
-    return this.map[row][col] > 0;
+    return this.map[row][col] === 1 || this.map[row][col] === 2;
   }
 
   _drawSoulDebris(ctx) {

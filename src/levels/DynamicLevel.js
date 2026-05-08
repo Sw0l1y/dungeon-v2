@@ -95,6 +95,17 @@ export class DynamicLevel extends Level {
           ctx.setLineDash([3, 3]);
           ctx.strokeRect(x + 4, y + 4, ts - 8, ts - 8);
           ctx.setLineDash([]);
+        } else if (tile === 3) {
+          // No-spawn floor — passable, enemies cannot spawn here
+          ctx.fillStyle = floor;
+          ctx.fillRect(x, y, ts, ts);
+          ctx.fillStyle = 'rgba(255,60,60,0.18)';
+          ctx.fillRect(x, y, ts, ts);
+          ctx.strokeStyle = 'rgba(255,80,80,0.30)';
+          ctx.lineWidth   = 1;
+          ctx.setLineDash([2, 3]);
+          ctx.strokeRect(x + 1, y + 1, ts - 2, ts - 2);
+          ctx.setLineDash([]);
         }
       }
     }

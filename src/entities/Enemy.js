@@ -127,7 +127,7 @@ export class Enemy {
       const col = Math.floor(px / ts);
       const row = Math.floor(py / ts);
       if (row < 0 || row >= map.length || col < 0 || col >= map[0].length) return true;
-      if (map[row][col] > 0) return true;
+      if (map[row][col] === 1 || map[row][col] === 2) return true;
     }
     return false;
   }

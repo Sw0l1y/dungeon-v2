@@ -65,7 +65,7 @@ export class HomingArrow extends Projectile {
     const { map, tileSize: ts } = this.level;
     const col = Math.floor(this.x / ts);
     const row = Math.floor(this.y / ts);
-    if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] > 0) {
+    if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] === 1 || map[row][col] === 2) {
       this.level.removeEntity(this);
     }
   }
@@ -102,7 +102,7 @@ export class HomingArrow extends Projectile {
     for (const p of probes) {
       const col = Math.floor(p.x / ts);
       const row = Math.floor(p.y / ts);
-      if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] > 0) {
+      if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] === 1 || map[row][col] === 2) {
         const cx = (col + 0.5) * ts;
         const cy = (row + 0.5) * ts;
         const awayX = this.x - cx;

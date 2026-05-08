@@ -220,8 +220,11 @@
         <button class="tile-btn" data-tile="2">
           <span class="tile-swatch" id="swatch-destr" style="border-style:dashed;border-color:rgba(91,195,255,.5)"></span>Wall (destr)<span class="shortcut">3</span>
         </button>
+        <button class="tile-btn nospawn-btn" data-tile="3" style="margin-bottom:0">
+          <span class="tile-swatch" style="background:rgba(255,60,60,0.45);border-color:rgba(255,80,80,.5)"></span>No Spawn<span class="shortcut">4</span>
+        </button>
         <div style="margin-top:4px;">
-          <button class="spawn-btn" id="spawn-mode-btn">⚑ Set Spawn<span class="shortcut" style="margin-left:auto;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;">4</span></button>
+          <button class="spawn-btn" id="spawn-mode-btn">⚑ Set Spawn<span class="shortcut" style="margin-left:auto;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;">5</span></button>
         </div>
       </div>
 
@@ -311,7 +314,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v1.2';
+const EDITOR_VERSION = 'v1.3';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -573,12 +576,18 @@ function render() {
         ctx.fillStyle = wall; ctx.fillRect(x, y, TILE_PX, TILE_PX);
         ctx.strokeStyle = 'rgba(91,195,255,0.15)'; ctx.lineWidth = 1;
         ctx.strokeRect(x+.5, y+.5, TILE_PX-1, TILE_PX-1);
-      } else {
+      } else if (t === 2) {
         ctx.fillStyle = destructible; ctx.fillRect(x, y, TILE_PX, TILE_PX);
         ctx.strokeStyle = 'rgba(91,195,255,0.15)'; ctx.lineWidth = 1;
         ctx.strokeRect(x+.5, y+.5, TILE_PX-1, TILE_PX-1);
         ctx.strokeStyle = 'rgba(91,195,255,0.55)'; ctx.lineWidth = 1;
         ctx.setLineDash([2,2]); ctx.strokeRect(x+4, y+4, TILE_PX-8, TILE_PX-8); ctx.setLineDash([]);
+      } else if (t === 3) {
+        // No-spawn floor: red tint over floor color + dashed border
+        ctx.fillStyle = floor; ctx.fillRect(x, y, TILE_PX, TILE_PX);
+        ctx.fillStyle = 'rgba(255,60,60,0.30)'; ctx.fillRect(x, y, TILE_PX, TILE_PX);
+        ctx.strokeStyle = 'rgba(255,80,80,0.60)'; ctx.lineWidth = 1;
+        ctx.setLineDash([2,3]); ctx.strokeRect(x+1.5, y+1.5, TILE_PX-3, TILE_PX-3); ctx.setLineDash([]);
       }
     }
   }
@@ -791,7 +800,8 @@ window.addEventListener('keydown',e=>{
   if(e.key==='1'){ activeTile=0; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='2'){ activeTile=1; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='3'){ activeTile=2; setSpawnMode(false); updateTileButtons(); }
-  if(e.key==='4'){ setSpawnMode(!spawnMode); }
+  if(e.key==='4'){ activeTile=3; setSpawnMode(false); updateTileButtons(); }
+  if(e.key==='5'){ setSpawnMode(!spawnMode); }
   if((e.ctrlKey||e.metaKey)&&e.key==='s'){ e.preventDefault(); syncToLive(); }
   if((e.ctrlKey||e.metaKey)&&e.key==='z'){ e.preventDefault(); undo(); }
 });

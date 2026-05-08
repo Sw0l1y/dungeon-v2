@@ -25,6 +25,10 @@ export class Relay {
     this._stuckTimer   = 0;
     this._escapeAngle  = Math.random() * Math.PI * 2;
     this._pulseT       = 0;  // animation clock
+
+    // Frantic wander state (activates when pulsar dies)
+    this._wanderAngle  = Math.random() * Math.PI * 2;
+    this._wanderTimer  = 0;
   }
 
   takeDamage(amount, source) {
@@ -48,70 +52,70 @@ export class Relay {
 
     const players = this.level.players.filter(p => p.alive);
 
-    // ── Flee vector: away from nearest player ─────────────────────────────
-    let fleeDx = 0, fleeDy = 0;
-    if (players.length > 0) {
-      let nearestDist = Infinity, nearestP = null;
-      for (const p of players) {
-        const d = Math.hypot(p.x - this.x, p.y - this.y);
-        if (d < nearestDist) { nearestDist = d; nearestP = p; }
-      }
-      const dx = this.x - nearestP.x;
-      const dy = this.y - nearestP.y;
-      const d  = Math.hypot(dx, dy) || 1;
-      // Flee weight: maximum when inside FLEE_DIST, tapering off beyond
-      const weight = Math.max(0.25, 1 + (FLEE_DIST - nearestDist) / FLEE_DIST);
-      fleeDx = (dx / d) * weight;
-      fleeDy = (dy / d) * weight;
-    }
+    // ── Movement ──────────────────────────────────────────────────────────
+    let moveDx, moveDy;
 
-    // ── Pulsar anchor: pull toward Pulsar when far, push away when too close ─
-    let pulsarDx = 0, pulsarDy = 0;
-    if (this.pulsar?.alive) {
+    if (!this.pulsar?.alive) {
+      // ── Frantic wander: pulsar is dead, relay panics ───────────────────
+      this._wanderTimer -= dt;
+      // Re-roll direction on timer expiry or when stuck against a wall
+      const movedFrantic = Math.hypot(this.x - this._lastX, this.y - this._lastY);
+      if (this._wanderTimer <= 0 || movedFrantic < 0.5) {
+        this._wanderAngle = Math.random() * Math.PI * 2;
+        this._wanderTimer = 0.3 + Math.random() * 0.35;
+      }
+      moveDx = Math.cos(this._wanderAngle);
+      moveDy = Math.sin(this._wanderAngle);
+
+    } else {
+      // ── Normal behaviour: flee players + stay near Pulsar ──────────────
+      let fleeDx = 0, fleeDy = 0;
+      if (players.length > 0) {
+        let nearestDist = Infinity, nearestP = null;
+        for (const p of players) {
+          const d = Math.hypot(p.x - this.x, p.y - this.y);
+          if (d < nearestDist) { nearestDist = d; nearestP = p; }
+        }
+        const dx = this.x - nearestP.x;
+        const dy = this.y - nearestP.y;
+        const d  = Math.hypot(dx, dy) || 1;
+        const weight = Math.max(0.25, 1 + (FLEE_DIST - nearestDist) / FLEE_DIST);
+        fleeDx = (dx / d) * weight;
+        fleeDy = (dy / d) * weight;
+      }
+
+      let pulsarDx = 0, pulsarDy = 0;
       const dx   = this.pulsar.x - this.x;
       const dy   = this.pulsar.y - this.y;
       const dist = Math.hypot(dx, dy) || 1;
       if (dist < PULSAR_MIN) {
-        // Too close — push away, stronger the closer we are
         const push = (1 - dist / PULSAR_MIN) * 2.5;
         pulsarDx = -(dx / dist) * push;
         pulsarDy = -(dy / dist) * push;
       } else {
-        // Pull ramps from 0 at PULSAR_MIN to full at PULSAR_PULL
         const pull = Math.min(2.2, (dist - PULSAR_MIN) / (PULSAR_PULL * 0.4));
         pulsarDx = (dx / dist) * pull;
         pulsarDy = (dy / dist) * pull;
       }
+
+      moveDx = fleeDx + pulsarDx * 0.65;
+      moveDy = fleeDy + pulsarDy * 0.65;
+      const mLen = Math.hypot(moveDx, moveDy) || 1;
+      moveDx /= mLen; moveDy /= mLen;
+
+      // Anti-corner: if stuck, escape toward Pulsar
+      const movedDist = Math.hypot(this.x - this._lastX, this.y - this._lastY);
+      this._stuckTimer = movedDist < 0.8 ? this._stuckTimer + dt : 0;
+      if (this._stuckTimer > 0.45) {
+        const dx2 = this.pulsar.x - this.x, dy2 = this.pulsar.y - this.y;
+        const d2  = Math.hypot(dx2, dy2) || 1;
+        moveDx = dx2 / d2; moveDy = dy2 / d2;
+        if (this._stuckTimer > 1.1) this._stuckTimer = 0;
+      }
     }
 
-    // ── Combined movement direction ────────────────────────────────────────
-    let moveDx = fleeDx + pulsarDx * 0.65;
-    let moveDy = fleeDy + pulsarDy * 0.65;
-    const mLen = Math.hypot(moveDx, moveDy) || 1;
-    moveDx /= mLen;
-    moveDy /= mLen;
-
-    // ── Anti-corner: if stuck, escape toward Pulsar ────────────────────────
-    const movedDist = Math.hypot(this.x - this._lastX, this.y - this._lastY);
-    this._stuckTimer = movedDist < 0.8 ? this._stuckTimer + dt : 0;
     this._lastX = this.x;
     this._lastY = this.y;
-
-    if (this._stuckTimer > 0.45) {
-      if (this.pulsar?.alive) {
-        // Escape by homing on the Pulsar — exits the corner naturally
-        const dx   = this.pulsar.x - this.x;
-        const dy   = this.pulsar.y - this.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        moveDx = dx / dist;
-        moveDy = dy / dist;
-      } else {
-        this._escapeAngle += Math.PI * (0.5 + Math.random() * 0.5);
-        moveDx = Math.cos(this._escapeAngle);
-        moveDy = Math.sin(this._escapeAngle);
-      }
-      if (this._stuckTimer > 1.1) this._stuckTimer = 0;
-    }
 
     // ── Apply movement ─────────────────────────────────────────────────────
     const nx = this.x + moveDx * this.speed * dt;
@@ -127,7 +131,7 @@ export class Relay {
       const col = Math.floor(px / ts);
       const row = Math.floor(py / ts);
       if (row < 0 || row >= map.length || col < 0 || col >= map[0].length) return true;
-      if (map[row][col] > 0) return true;
+      if (map[row][col] === 1 || map[row][col] === 2) return true;
     }
     return false;
   }

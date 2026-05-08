@@ -109,7 +109,7 @@ export class WaveManager {
     const spots = [];
     for (let r = 1; r < rows - 1; r++) {
       for (let c = 1; c < cols - 1; c++) {
-        if (map[r][c] !== 0) continue;
+        if (map[r][c] !== 0) continue; // tile 3 (no-spawn floor) is naturally excluded here
         const rx = c / cols;
         const ry = r / rows;
         if (rx < 0.35 || rx > 0.65 || ry < 0.35 || ry > 0.65) {
