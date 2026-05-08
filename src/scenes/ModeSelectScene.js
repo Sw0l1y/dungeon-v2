@@ -109,8 +109,8 @@ export class ModeSelectScene extends Scene {
       },
       {
         label:     'ONLINE PLAY',
-        sublabel:  '4 Players',
-        detail:    '2 per device · over network',
+        sublabel:  '2–4 Players',
+        detail:    '1–2 per device · over network',
         available: true,
       },
     ];

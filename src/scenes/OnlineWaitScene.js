@@ -1,7 +1,6 @@
-import { Scene         } from './Scene.js';
-import { ClassScene    } from './ClassScene.js';
-import { NetSession    } from '../systems/NetSession.js';
-import { RemoteBinding } from '../systems/RemoteBinding.js';
+import { Scene            } from './Scene.js';
+import { OnlineLobbyScene } from './OnlineLobbyScene.js';
+import { NetSession       } from '../systems/NetSession.js';
 
 // Charset with no ambiguous characters (0/O, 1/I/L)
 const CHARSET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -72,10 +71,6 @@ export class OnlineWaitScene extends Scene {
         if (this._typed.length === 4) this._startJoin(this._typed);
       }
     }
-
-    if (this._phase === 'connected' && (ev.key === 'Enter' || ev.key === ' ')) {
-      this._hostLaunch();
-    }
   }
 
   update(dt) {
@@ -94,10 +89,6 @@ export class OnlineWaitScene extends Scene {
       if (this._hit({ x: W / 2 + 20,  y: H / 2 - 40, w: 190, h: 80 }, pt)) {
         this._phase = 'joining'; this._typed = '';
       }
-    }
-
-    if (this._phase === 'connected' && this._net?.role === 'host') {
-      if (this._hit({ x: W / 2 - 100, y: H / 2 + 60, w: 200, h: 48 }, pt)) this._hostLaunch();
     }
 
     // Copy code button (waiting_host phase)
@@ -139,9 +130,8 @@ export class OnlineWaitScene extends Scene {
     this._code  = makeCode();
     this._phase = 'hosting';   // "Connecting to server..."
     this._net   = new NetSession();
-    this._net.onWaiting      = () => { this._phase = 'waiting_host'; };   // server confirmed — now show code
-    this._net.onConnected    = () => { this._phase = 'connected'; };
-    this._net.onMessage      = (d) => { if (d.t === 'start') this._launch('client'); };
+    this._net.onWaiting      = () => { this._phase = 'waiting_host'; };   // server confirmed — show code
+    this._net.onConnected    = () => { this._toLobby('host'); };          // peer joined → go to lobby
     this._net.onDisconnected = () => { this._error = 'Player disconnected'; this._phase = 'error'; };
     this._net.onError        = (m) => { this._error = m;                    this._phase = 'error'; };
     this._net.host(this._code);
@@ -151,51 +141,23 @@ export class OnlineWaitScene extends Scene {
     this._code  = code;
     this._phase = 'hosting';   // "Connecting to server..."
     this._net   = new NetSession();
-    this._net.onConnected    = () => { this._phase = 'waiting_start'; };
-    this._net.onMessage      = (d) => { if (d.t === 'start') this._launch('client'); };
+    this._net.onConnected    = () => { this._toLobby('client'); };        // connected → go to lobby
     this._net.onDisconnected = () => { this._error = 'Host disconnected'; this._phase = 'error'; };
     this._net.onError        = (m) => { this._error = m;                  this._phase = 'error'; };
     this._net.join(code);
   }
 
-  _hostLaunch() {
-    this._net?.send({ t: 'start' });
-    this._launch('host');
-  }
-
-  _launch(role) {
-    const net = this._net;
+  // Forward to OnlineLobbyScene, preserving the net session and room code
+  _toLobby(role) {
+    const net  = this._net;
+    const code = this._code;
     this._net = null;  // prevent onExit from closing it
 
-    // Two remote bindings — one per remote player
-    const rb1 = new RemoteBinding();
-    const rb2 = new RemoteBinding();
+    this.game.state.netSession = net;
+    this.game.state.netRole    = role;
+    this.game.state.netCode    = code;
 
-    // Players 0-1 are the host's two local players.
-    // Players 2-3 are the client's two local players.
-    // remote:true marks the players driven by RemoteBinding — ClassScene skips them.
-    if (role === 'host') {
-      this.game.state.players = [
-        { name: 'P1', color: '#8cf3ff', binding: this.game.bindings.player1 },
-        { name: 'P2', color: '#ff8c42', binding: this.game.bindings.player2 },
-        { name: 'P3', color: '#a8ff78', binding: rb1, remote: true, classId: 'sword' },
-        { name: 'P4', color: '#ff6b9d', binding: rb2, remote: true, classId: 'sword' },
-      ];
-    } else {
-      this.game.state.players = [
-        { name: 'P1', color: '#8cf3ff', binding: rb1, remote: true, classId: 'sword' },
-        { name: 'P2', color: '#ff8c42', binding: rb2, remote: true, classId: 'sword' },
-        { name: 'P3', color: '#a8ff78', binding: this.game.bindings.player1 },
-        { name: 'P4', color: '#ff6b9d', binding: this.game.bindings.player2 },
-      ];
-    }
-
-    this.game.state.netSession      = net;
-    this.game.state.netRole         = role;
-    this.game.state.remoteBindings  = [rb1, rb2];
-
-    // ClassScene handles class selection for local players only, then launches GameScene
-    this.game.scenes.switch(new ClassScene(this.game));
+    this.game.scenes.switch(new OnlineLobbyScene(this.game));
   }
 
   // ── Draw ───────────────────────────────────────────────────────────────────
