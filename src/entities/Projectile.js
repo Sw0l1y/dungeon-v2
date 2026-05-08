@@ -8,6 +8,7 @@ export class Projectile {
     this.owner     = owner;
     this.radius    = 5;
     this._lifetime = 3;
+    this._trail    = []; // actual past positions — grows as the arrow travels
   }
 
   update(dt) {
@@ -16,6 +17,10 @@ export class Projectile {
 
     this.x += this.vx * dt;
     this.y += this.vy * dt;
+
+    // Record position after moving so trail never overlaps the spawn point
+    this._trail.push({ x: this.x, y: this.y });
+    if (this._trail.length > 8) this._trail.shift();
 
     // Enemy hit
     for (const e of [...this.level.entities]) {
@@ -125,14 +130,14 @@ export class Projectile {
     const px    = -dy;  // perpendicular (right-hand)
     const py    =  dx;
 
-    // ── Trail: ghost arrows spaced behind the main one ─────────────────────
-    const TRAIL_N   = 7;
-    const TRAIL_GAP = 9; // px between ghost positions
-    for (let i = TRAIL_N; i >= 1; i--) {
-      const tx    = this.x - dx * i * TRAIL_GAP;
-      const ty    = this.y - dy * i * TRAIL_GAP;
-      const alpha = (1 - i / (TRAIL_N + 1)) * 0.42;
-      this._drawArrow(ctx, tx, ty, dx, dy, px, py, alpha);
+    // ── Trail: actual past positions recorded each frame ───────────────────
+    // Starts empty on spawn and grows as the arrow travels — no clipping.
+    const n = this._trail.length;
+    for (let i = 0; i < n; i++) {
+      const pos   = this._trail[i];
+      const frac  = (i + 1) / (n + 1); // 0 = oldest/faintest → 1 = most recent
+      const alpha = frac * 0.44;
+      this._drawArrow(ctx, pos.x, pos.y, dx, dy, px, py, alpha);
     }
 
     // ── Main arrow head ────────────────────────────────────────────────────
