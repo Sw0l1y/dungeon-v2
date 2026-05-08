@@ -4,7 +4,7 @@ import { InputBinding } from './systems/InputBinding.js';
 import { BINDINGS } from './systems/bindings.js';
 import { TitleScene } from './scenes/TitleScene.js';
 
-export const VERSION = 'v0.10.7';
+export const VERSION = 'v0.10.8';
 
 export class Game {
   constructor(canvas) {
@@ -32,7 +32,7 @@ export class Game {
 
   start() {
     // Non-blocking fetch — completes long before the player reaches GameScene
-    fetch('src/data/maps.json')
+    fetch('src/data/maps.json', { cache: 'no-cache' })
       .then(r => r.json())
       .then(data => { this.maps = data; this.mapVersion = data.mapVersion ?? null; })
       .catch(() => { /* fall back to built-in Level1 */ });
