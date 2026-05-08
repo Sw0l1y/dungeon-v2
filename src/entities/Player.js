@@ -62,7 +62,7 @@ export class Player {
     if (!this.alive) return;
     const { x: ax, y: ay } = this.binding.axes;
 
-    if (this.classId === 'archer' || this.classId === 'rogue') {
+    if (this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') {
       // Auto-aim: face the most threatening enemy
       const target = this._nearestEnemy();
       if (target) {
@@ -343,8 +343,8 @@ export class Player {
 
     ctx.restore();
 
-    // Crosshair over aim target (archer + rogue)
-    if ((this.classId === 'archer' || this.classId === 'rogue') && this._aimTarget?.alive) {
+    // Crosshair over aim target (archer + rogue + sword)
+    if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') && this._aimTarget?.alive) {
       this._drawCrosshair(ctx);
     }
 
