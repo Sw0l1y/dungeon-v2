@@ -16,6 +16,10 @@ export class SwordSwing {
   get _progress() { return 1 - this._timer / this._duration; }
 
   update(dt) {
+    // Keep the swing anchored to the player as they move
+    this.x = this.owner.x;
+    this.y = this.owner.y;
+
     this._timer -= dt;
 
     // Hit detection at mid-swing
