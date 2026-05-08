@@ -158,6 +158,12 @@ export class GameScene extends Scene {
     }
 
     if (ps.length > 0 && ps.every(p => !p.alive)) {
+      // Notify client before switching — the return below skips the normal
+      // network-send block, so without this explicit message the client never
+      // receives the final "all dead" state and stays stuck in GameScene.
+      if (this._netRole === 'host') {
+        this._net?.send({ t: 'gameover' });
+      }
       this.game.scenes.switch(new DeathScene(this.game));
       return;
     }
@@ -498,6 +504,14 @@ export class GameScene extends Scene {
       }
     } else {
       if (data.t === 'gs') this._applyHostState(data);
+
+      // Host explicitly signals game-over before switching to DeathScene.
+      // The normal "all players dead" check in update() runs BEFORE the network
+      // send block, so the host scene-switches without sending a final gs packet.
+      // This message ensures the client always follows the host to DeathScene.
+      if (data.t === 'gameover') {
+        this.game.scenes.switch(new DeathScene(this.game));
+      }
     }
   }
 
