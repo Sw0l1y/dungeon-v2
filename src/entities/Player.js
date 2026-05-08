@@ -229,7 +229,13 @@ export class Player {
     let bestScore  = Infinity;
     let bestTarget = null;
 
-    for (const e of this.level.entities) {
+    // On the client enemies live in level.ghostEntities (not level.entities).
+    // Merge both so auto-aim works correctly on both host and client.
+    const candidates = this.level.ghostEntities?.length
+      ? this.level.ghostEntities
+      : this.level.entities;
+
+    for (const e of candidates) {
       if (!e.isEnemy || !e.alive) continue;
       const dist        = Math.hypot(e.x - this.x, e.y - this.y);
       const los         = this._hasLos(e);
@@ -238,8 +244,13 @@ export class Player {
       if (score < bestScore) { bestScore = score; bestTarget = e; }
     }
 
-    // Stickiness: keep current lock unless the new target is significantly more threatening
-    if (this._aimTarget?.alive) {
+    // Stickiness: keep current lock unless the new target is significantly more threatening.
+    // Also verify the locked target is still in the candidate list (ghost proxies are
+    // replaced each frame by reference, so we match by position proximity instead).
+    const lockStillValid = this._aimTarget?.alive &&
+      candidates.some(e => e === this._aimTarget ||
+        (e.isEnemy && Math.hypot(e.x - this._aimTarget.x, e.y - this._aimTarget.y) < 2));
+    if (lockStillValid) {
       const cd      = Math.hypot(this._aimTarget.x - this.x, this._aimTarget.y - this.y);
       const cLos    = this._hasLos(this._aimTarget);
       const cScore  = (cLos ? cd : cd * LOS_PENALTY) / (this._aimTarget.speed || 75);

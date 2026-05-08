@@ -430,6 +430,9 @@ export class GameScene extends Scene {
         d:  pl._downed ? 1 : 0,
         fx: pl._facingX,
         fy: pl._facingY,
+        // Movement axes so client can extrapolate host-player positions between snaps
+        ax: +(pl.binding?.axes?.x ?? 0).toFixed(3),
+        ay: +(pl.binding?.axes?.y ?? 0).toFixed(3),
       })),
       // Enemies: [netId, typeIdx, x, y, hpPct0-255]
       en: ents
@@ -502,22 +505,29 @@ export class GameScene extends Scene {
   _applyHostState(state) {
     const ps = this.level.players;
 
-    // Update player states
+    // Update player states — host is fully authoritative for ALL positions
     if (state.p) {
       state.p.forEach((pd, i) => {
         const pl = ps[i];
         if (!pl) return;
 
-        // Host's local players (0..hostPlayerCount-1): snap positions from host state
-        // Client's own players: accept HP / downed only
-        if (i < this._hostPlayerCount) {
-          pl.x = pd.x;
-          pl.y = pd.y;
-          pl._facingX = pd.fx ?? pl._facingX;
-          pl._facingY = pd.fy ?? pl._facingY;
+        // Snap position and facing for every player (correction for client players,
+        // authoritative feed for host players)
+        pl.x = pd.x;
+        pl.y = pd.y;
+        pl._facingX = pd.fx ?? pl._facingX;
+        pl._facingY = pd.fy ?? pl._facingY;
+
+        // For host-local players: push their movement axes into the RemoteBinding so
+        // Player.update() smoothly extrapolates their position between state packets
+        // instead of freezing them (axes default to 0 on a fresh RemoteBinding).
+        if (i < this._hostPlayerCount && pd.ax !== undefined) {
+          if (pl.binding?.axes !== undefined) {
+            pl.binding.axes = { x: pd.ax, y: pd.ay ?? 0 };
+          }
         }
 
-        // Authoritative HP + downed state for all four players
+        // Authoritative HP + downed state for all players
         pl.hp = Math.max(0, pd.hp);
         if (pd.d && !pl._downed) { pl._downed = true;  pl.alive = false; }
         if (!pd.d && pl._downed) { pl._downed = false; pl.alive = true;  }
@@ -537,6 +547,20 @@ export class GameScene extends Scene {
       for (const id of this._ghosts.keys()) {
         if (!seen.has(id)) this._ghosts.delete(id);
       }
+
+      // Expose ghost positions as lightweight aim proxies so Player._nearestEnemy()
+      // produces correct auto-aim directions on the client (enemies aren't in
+      // level.entities on the client, so without this the facing is always null).
+      const RADIUS_BY_TYPE = [12, 9, 13, 38];
+      const SPEED_BY_TYPE  = [75, 210, 55, 60];
+      this.level.ghostEntities = Array.from(this._ghosts.values()).map(g => ({
+        isEnemy: true,
+        alive:   true,
+        x:       g.x,
+        y:       g.y,
+        radius:  RADIUS_BY_TYPE[g.typeIdx] ?? 12,
+        speed:   SPEED_BY_TYPE[g.typeIdx]  ?? 75,
+      }));
     }
 
     // Ghost projectiles
