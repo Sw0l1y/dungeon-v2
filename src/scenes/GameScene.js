@@ -44,6 +44,10 @@ export class GameScene extends Scene {
     this._netDisconnected = false;
     // Buffered fx events to include in next state packet (host only)
     this._pendingEvents = [];
+    // Delta-send cache: last broadcast position per enemy netId (host only)
+    this._lastSentEnemyPos = new Map();
+    // Interpolation delay for ghost rendering (ms behind real-time)
+    this._INTERP_DELAY = 80;
 
     // Multi-client input routing (host only):
     //   Map<peerId, {offset, count}> — which remoteBindings slice each client owns
@@ -472,14 +476,31 @@ export class GameScene extends Scene {
         ax: +(pl.binding?.axes?.x ?? 0).toFixed(3),
         ay: +(pl.binding?.axes?.y ?? 0).toFixed(3),
       })),
-      // Enemies: [netId, typeIdx, x, y, hpPct0-255]
-      en: ents
-        .filter(e => e.isEnemy && e.alive)
-        .map(e => [
-          e._netId, e._typeIdx,
-          Math.round(e.x), Math.round(e.y),
-          Math.round(e.hp / e.maxHp * 255),
-        ]),
+      // Enemies: full [netId, typeIdx, x, y, hpPct0-255] OR compact [netId] (alive, pos unchanged).
+      // Compact entries save bandwidth when enemies are stationary; client keeps last known pos.
+      // A full entry is always sent when the enemy moved ≥1px or hasn't been sent in 200ms.
+      en: (() => {
+        const nowMs  = performance.now();
+        const result = [];
+        for (const e of ents) {
+          if (!e.isEnemy || !e.alive) continue;
+          const ex   = Math.round(e.x), ey = Math.round(e.y);
+          const last = this._lastSentEnemyPos.get(e._netId);
+          const moved = !last || Math.hypot(ex - last.x, ey - last.y) >= 1.0;
+          const stale = !last || (nowMs - last.t) >= 200;
+          if (moved || stale) {
+            this._lastSentEnemyPos.set(e._netId, { x: ex, y: ey, t: nowMs });
+            result.push([e._netId, e._typeIdx, ex, ey, Math.round(e.hp / e.maxHp * 255)]);
+          } else {
+            result.push([e._netId]); // compact: still alive, position unchanged
+          }
+        }
+        // Purge dead enemies from position cache
+        for (const id of this._lastSentEnemyPos.keys()) {
+          if (!ents.some(e => e._netId === id && e.alive)) this._lastSentEnemyPos.delete(id);
+        }
+        return result;
+      })(),
       // Projectiles from host-local players and enemies
       proj: {
         pl: ents
@@ -592,12 +613,25 @@ export class GameScene extends Scene {
     // Update ghost enemies (purely visual — client renders, host does all AI/damage)
     if (state.en) {
       const seen = new Set();
-      for (const [id, typeIdx, x, y, hpPct255] of state.en) {
+      const nowMs = performance.now();
+      for (const entry of state.en) {
+        const id = entry[0];
         seen.add(id);
+        if (entry.length === 1) {
+          // Compact entry: ghost is still alive but position didn't change — no update needed.
+          // If somehow the ghost doesn't exist yet (e.g. mid-wave join), skip until full arrives.
+          continue;
+        }
+        const [, typeIdx, x, y, hpPct255] = entry;
         const hpPct = (hpPct255 ?? 255) / 255;
         const g = this._ghosts.get(id);
-        if (g) { g.x = x; g.y = y; g.hpPct = hpPct; }
-        else    this._ghosts.set(id, { id, typeIdx, x, y, hpPct });
+        if (g) {
+          g.x = x; g.y = y; g.hpPct = hpPct; // latest authoritative pos (used for aim proxies)
+          g.snaps.push({ t: nowMs, x, y });
+          if (g.snaps.length > 6) g.snaps.shift();
+        } else {
+          this._ghosts.set(id, { id, typeIdx, x, y, hpPct, snaps: [{ t: nowMs, x, y }] });
+        }
       }
       for (const id of this._ghosts.keys()) {
         if (!seen.has(id)) this._ghosts.delete(id);
@@ -606,6 +640,7 @@ export class GameScene extends Scene {
       // Expose ghost positions as lightweight aim proxies so Player._nearestEnemy()
       // produces correct auto-aim directions on the client (enemies aren't in
       // level.entities on the client, so without this the facing is always null).
+      // Use the latest received position (g.x/g.y) for aim accuracy, not the render-delayed one.
       const RADIUS_BY_TYPE = [12, 9, 13, 38, 14, 8];
       const SPEED_BY_TYPE  = [75, 238, 55, 60, 50, 115];
       this.level.ghostEntities = Array.from(this._ghosts.values()).map(g => ({
@@ -694,16 +729,52 @@ export class GameScene extends Scene {
     if (this._netDisconnected) this._drawDisconnect(ctx);
   }
 
+  /**
+   * Returns the interpolated render position for a ghost at `now - _INTERP_DELAY`.
+   * Falls back to the latest snapshot if the buffer is too thin, and extrapolates
+   * (capped to 2 steps) when the render time is ahead of all known snapshots.
+   */
+  _ghostInterp(g) {
+    const snaps = g.snaps;
+    if (!snaps || snaps.length === 0) return { x: g.x, y: g.y };
+    const renderT = performance.now() - this._INTERP_DELAY;
+
+    if (snaps.length === 1 || renderT <= snaps[0].t) {
+      return { x: snaps[0].x, y: snaps[0].y };
+    }
+
+    // Find the two snapshots that bracket renderT and lerp between them
+    for (let i = 1; i < snaps.length; i++) {
+      if (renderT <= snaps[i].t) {
+        const a = snaps[i - 1], b = snaps[i];
+        const frac = (renderT - a.t) / (b.t - a.t);
+        return { x: a.x + (b.x - a.x) * frac, y: a.y + (b.y - a.y) * frac };
+      }
+    }
+
+    // renderT is beyond all snapshots — extrapolate from the last two (capped to 2× interval)
+    const n = snaps.length;
+    if (n < 2) return { x: snaps[n - 1].x, y: snaps[n - 1].y };
+    const a = snaps[n - 2], b = snaps[n - 1];
+    const dt = b.t - a.t;
+    if (dt < 1) return { x: b.x, y: b.y };
+    const frac = Math.min((renderT - b.t) / dt, 2.0);
+    return { x: b.x + (b.x - a.x) * frac, y: b.y + (b.y - a.y) * frac };
+  }
+
   /** Draw ghost enemies on the client, matching each type's actual visuals. */
   _drawGhosts(ctx) {
     for (const g of this._ghosts.values()) {
-      switch (g.typeIdx) {
-        case 0: this._drawGhostEnemy(ctx, g);    break;
-        case 1: this._drawGhostSprinter(ctx, g); break;
-        case 2: this._drawGhostRanger(ctx, g);   break;
-        case 3: this._drawGhostBoss(ctx, g);     break;
-        case 4: this._drawGhostPulsar(ctx, g);   break;
-        case 5: this._drawGhostRelay(ctx, g);    break;
+      // Use interpolated position so remote enemies glide smoothly between 20 hz snapshots
+      const { x, y } = this._ghostInterp(g);
+      const gv = { ...g, x, y };
+      switch (gv.typeIdx) {
+        case 0: this._drawGhostEnemy(ctx, gv);    break;
+        case 1: this._drawGhostSprinter(ctx, gv); break;
+        case 2: this._drawGhostRanger(ctx, gv);   break;
+        case 3: this._drawGhostBoss(ctx, gv);     break;
+        case 4: this._drawGhostPulsar(ctx, gv);   break;
+        case 5: this._drawGhostRelay(ctx, gv);    break;
       }
     }
   }
