@@ -76,7 +76,7 @@ export class OnlineLobbyScene extends Scene {
           // Auto-place the joining client in the first empty slot
           const emptyIdx = this._slots.findIndex(s => !s.active);
           if (emptyIdx !== -1) {
-            this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: emptyIdx % COLORS.length, isRemote: true };
+            this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: this._nextFreeColor(emptyIdx), isRemote: true };
           }
           this._syncLobby();
         }
@@ -106,7 +106,7 @@ export class OnlineLobbyScene extends Scene {
             if (remoteCount < MAX_LOCAL) {
               const emptyIdx = this._slots.findIndex(s => !s.active);
               if (emptyIdx !== -1) {
-                this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: emptyIdx % COLORS.length, isRemote: true };
+                this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: this._nextFreeColor(emptyIdx), isRemote: true };
                 this._syncLobby();
               }
             }
@@ -207,6 +207,20 @@ export class OnlineLobbyScene extends Scene {
     return (this._slots ?? []).some(
       (s, i) => i !== slotIdx && s.active && s.colorIdx === colorIdx,
     );
+  }
+
+  // Returns the first color index not already used by any active slot,
+  // treating slotIdx as the slot being filled (excluded from the taken check).
+  _nextFreeColor(slotIdx) {
+    const taken = new Set(
+      (this._slots ?? [])
+        .filter((s, i) => i !== slotIdx && s.active)
+        .map(s => s.colorIdx),
+    );
+    for (let c = 0; c < COLORS.length; c++) {
+      if (!taken.has(c)) return c;
+    }
+    return 0; // fallback — all 6 colours claimed (only possible with future content)
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────
@@ -425,9 +439,10 @@ export class OnlineLobbyScene extends Scene {
         if (isHost && this._hit(this._addBtn(card), pt)) {
           const localCount = slots.filter(s => s.active && !s.isRemote).length;
           if (localCount < MAX_LOCAL) {
-            slot.active   = true;
-            slot.isRemote = false;
-            slot.name     = `Player ${idx + 1}`;
+            slot.active    = true;
+            slot.isRemote  = false;
+            slot.name      = `Player ${idx + 1}`;
+            slot.colorIdx  = this._nextFreeColor(idx);
             this._syncLobby();
           }
           return;
