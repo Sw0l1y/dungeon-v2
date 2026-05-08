@@ -35,9 +35,8 @@ export class ClassScene extends Scene {
     const net        = this.game.state.netSession ?? null;
     const role       = this.game.state.netRole    ?? null;
 
-    // Remote players (other device) get their last-known classId as a starting
-    // point; local players start with null (must pick).
-    this._selections = allPlayers.map(p => p.remote ? (p.classId ?? 'sword') : null);
+    // All players start with no selection — everyone must explicitly pick a class.
+    this._selections = allPlayers.map(() => null);
 
     // Which player indices belong to this device vs. the other device
     this._localIdxs  = allPlayers.map((p, i) => i).filter(i => !allPlayers[i].remote);
