@@ -21,8 +21,9 @@ export class OnlineWaitScene extends Scene {
     this._phase = 'pick';
     this._typed = '';
 
-    this._mouse        = { x: 0, y: 0 };
-    this._pendingClick = null;
+    this._mouse         = { x: 0, y: 0 };
+    this._pendingClick  = null;
+    this._pasteFeedback = 0;   // > 0 → show "Pasted!" briefly
 
     this._onMouseMove = (e) => {
       const r = this.game.canvas.getBoundingClientRect();
@@ -58,6 +59,12 @@ export class OnlineWaitScene extends Scene {
       return;
     }
     if (this._phase === 'joining') {
+      // Ctrl/Cmd+V — paste from clipboard
+      if ((ev.ctrlKey || ev.metaKey) && ev.key === 'v') {
+        ev.preventDefault();
+        navigator.clipboard?.readText().then(t => this._applyPaste(t)).catch(() => {});
+        return;
+      }
       if (ev.key === 'Backspace') { this._typed = this._typed.slice(0, -1); return; }
       const ch = ev.key.toUpperCase();
       if (CHARSET.includes(ch) && this._typed.length < 4) {
@@ -67,7 +74,20 @@ export class OnlineWaitScene extends Scene {
     }
   }
 
-  update(_dt) {
+  _applyPaste(text) {
+    // Strip everything except valid charset letters, take first 4
+    const filtered = [...text.toUpperCase()]
+      .filter(ch => CHARSET.includes(ch))
+      .slice(0, 4)
+      .join('');
+    if (!filtered) return;
+    this._typed = filtered;
+    this._pasteFeedback = 1.2;
+    if (this._typed.length === 4) this._startJoin(this._typed);
+  }
+
+  update(dt) {
+    if (this._pasteFeedback > 0) this._pasteFeedback -= dt;
     const click = this._pendingClick;
     this._pendingClick = null;
     if (click) this._handleClick(click);
@@ -85,6 +105,16 @@ export class OnlineWaitScene extends Scene {
         this._phase = 'joining'; this._typed = '';
       }
     }
+
+    if (this._phase === 'joining') {
+      if (this._hit(this._pasteBtn(W, H), pt)) {
+        navigator.clipboard?.readText().then(t => this._applyPaste(t)).catch(() => {});
+      }
+    }
+  }
+
+  _pasteBtn(W, H) {
+    return { x: W / 2 - 72, y: H / 2 + 30, w: 144, h: 36 };
   }
 
   _hit({ x, y, w, h }, pt) {
@@ -189,9 +219,24 @@ export class OnlineWaitScene extends Scene {
       ctx.fillText(filled ? this._typed[i] : (cursor ? '|' : ''), rx + boxW / 2, by + boxH / 2);
     }
 
+    // ── Paste button ──────────────────────────────────────────────────────
+    const pb     = this._pasteBtn(W, H);
+    const pasted = this._pasteFeedback > 0;
+    const pbHov  = !pasted && this._hit(pb, this._mouse);
+
+    ctx.fillStyle = pasted ? 'rgba(100,255,140,0.18)' : pbHov ? 'rgba(140,243,255,0.18)' : 'rgba(140,243,255,0.07)';
+    ctx.beginPath(); ctx.roundRect(pb.x, pb.y, pb.w, pb.h, 8); ctx.fill();
+    ctx.strokeStyle = pasted ? 'rgba(100,255,140,0.55)' : pbHov ? '#8cf3ff' : 'rgba(140,243,255,0.28)';
+    ctx.lineWidth = pbHov ? 1.5 : 1;
+    ctx.beginPath(); ctx.roundRect(pb.x, pb.y, pb.w, pb.h, 8); ctx.stroke();
+    ctx.fillStyle = pasted ? 'rgba(100,255,160,0.9)' : pbHov ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
+    ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(pasted ? '✓ Pasted!' : '⌘/Ctrl+V  Paste code', pb.x + pb.w / 2, pb.y + pb.h / 2);
+
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('Type the 4-letter code  ·  ESC to go back', W / 2, H - 22);
+    ctx.fillText('Type or paste the 4-letter code  ·  ESC to go back', W / 2, H - 22);
   }
 }
