@@ -21,6 +21,16 @@ export class DynamicLevel extends Level {
     const ts = this.tileSize;
     this._spawnX = ((config.playerSpawn?.col ?? Math.floor(this.map[0].length / 2)) + 0.5) * ts;
     this._spawnY = ((config.playerSpawn?.row ?? Math.floor(this.map.length    / 2)) + 0.5) * ts;
+
+    // Custom tile colors (falls back to default dark palette)
+    this.tileColors = {
+      floor:        config.tileColors?.floor        ?? '#22304a',
+      wall:         config.tileColors?.wall         ?? '#1a2340',
+      destructible: config.tileColors?.destructible ?? '#1a2340',
+    };
+
+    // Per-room wave config — null means WaveManager uses its hardcoded formula
+    this.waveConfig = config.waves ?? null;
   }
 
   onEnter() {
@@ -56,20 +66,35 @@ export class DynamicLevel extends Level {
     const ts   = this.tileSize;
     const rows = this.map.length;
     const cols = this.map[0].length;
+    const { floor, wall, destructible } = this.tileColors;
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const tile = this.map[r][c];
+        const x = c * ts, y = r * ts;
+
         if (tile === 0) {
-          ctx.fillStyle = '#22304a';
-          ctx.fillRect(c * ts, r * ts, ts, ts);
-        } else {
-          // Both perm-wall (1) and destructible (2) share the same appearance in-game
-          ctx.fillStyle = '#1a2340';
-          ctx.fillRect(c * ts, r * ts, ts, ts);
-          ctx.strokeStyle = 'rgba(91,195,255,0.08)';
+          ctx.fillStyle = floor;
+          ctx.fillRect(x, y, ts, ts);
+        } else if (tile === 1) {
+          // Permanent wall — solid fill + rim border
+          ctx.fillStyle = wall;
+          ctx.fillRect(x, y, ts, ts);
+          ctx.strokeStyle = 'rgba(91,195,255,0.10)';
           ctx.lineWidth   = 1;
-          ctx.strokeRect(c * ts, r * ts, ts, ts);
+          ctx.strokeRect(x, y, ts, ts);
+        } else if (tile === 2) {
+          // Destructible wall — custom color + dashed inner rect to stay visually distinct
+          ctx.fillStyle = destructible;
+          ctx.fillRect(x, y, ts, ts);
+          ctx.strokeStyle = 'rgba(91,195,255,0.10)';
+          ctx.lineWidth   = 1;
+          ctx.strokeRect(x, y, ts, ts);
+          ctx.strokeStyle = 'rgba(91,195,255,0.32)';
+          ctx.lineWidth   = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.strokeRect(x + 4, y + 4, ts - 8, ts - 8);
+          ctx.setLineDash([]);
         }
       }
     }

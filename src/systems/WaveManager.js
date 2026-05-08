@@ -26,25 +26,33 @@ export class WaveManager {
     this.active   = true;
     this._enemies = [];
 
-    // Wave 5 — boss only, spawns at arena center
-    if (this.wave === 5) {
+    // Per-room wave config (set on level.waveConfig by DynamicLevel); falls back to
+    // the hardcoded formula when not present or when this wave index has no entry.
+    const waveConfigs = this.level.waveConfig ?? null;
+    const wcfg        = waveConfigs ? (waveConfigs[this.wave - 1] ?? null) : null;
+
+    // Boss wave: explicit config flag OR hardcoded wave-5 fallback
+    const isBossWave = wcfg ? !!wcfg.boss : this.wave === 5;
+
+    if (isBossWave) {
       const { map, tileSize: ts } = this.level;
       const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
       const cy = Math.floor(map.length    / 2) * ts + ts / 2;
       const boss = new Boss(this.level, cx, cy);
       boss._netId = ++this._netIdSeq;
-      // Give the boss a reference back to this WaveManager so it can set bossDefeated
       this.level.game.state._waveManager = this;
       this.level.addEntity(boss);
       this._enemies.push(boss);
       return;
     }
 
-    const spots     = this._spawnSpots();
-    const basics    = 2 + this.wave;
-    const sprinters = Math.max(0, this.wave - 1);
-    const rangers   = Math.max(0, this.wave - 2);
-    const pairs     = this.wave >= 3 ? 1 : 0; // one Pulsar+Relay pair from wave 3
+    const spots = this._spawnSpots();
+
+    // Use explicit counts from config; fall back to hardcoded per-wave formula
+    const basics    = wcfg?.enemy    !== undefined ? wcfg.enemy    : (2 + this.wave);
+    const sprinters = wcfg?.sprinter !== undefined ? wcfg.sprinter : Math.max(0, this.wave - 1);
+    const rangers   = wcfg?.ranger   !== undefined ? wcfg.ranger   : Math.max(0, this.wave - 2);
+    const pairs     = wcfg?.pairs    !== undefined ? wcfg.pairs    : (this.wave >= 3 ? 1 : 0);
 
     const spawn = (Type) => {
       const { x, y } = spots[Math.floor(Math.random() * spots.length)];
