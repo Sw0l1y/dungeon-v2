@@ -20,6 +20,7 @@ export class Pulsar {
     this.hp       = 90;
     this.alive    = true;
     this.isEnemy  = true;
+    this.instantKillImmune = true;
     this.damage   = 0;       // damage dealt only via shockwave
     this._typeIdx = 4;
     this._netId   = 0;

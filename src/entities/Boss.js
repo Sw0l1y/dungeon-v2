@@ -45,6 +45,7 @@ export class Boss {
     this.alive   = true;
     this.isEnemy  = true;
     this.isBoss   = true;
+    this.instantKillImmune = true;
     this._typeIdx = 3;   // for net serialization: 3=Boss
     this._netId   = 0;
     this.damage   = 20;
