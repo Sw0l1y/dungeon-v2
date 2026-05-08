@@ -3,6 +3,17 @@ import { OnlineWaitScene } from './OnlineWaitScene.js';
 import { ClassScene      } from './ClassScene.js';
 import { RemoteBinding   } from '../systems/RemoteBinding.js';
 
+// Synchronous clipboard write — works in Safari when called directly from a user-gesture handler
+function _copyToClipboard(text) {
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0', pointerEvents: 'none' });
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try { document.execCommand('copy'); } catch (_) {}
+  ta.remove();
+}
+
 const COLORS      = ['#8cf3ff', '#ff8c42', '#a8ff78', '#ff6b9d', '#c77dff', '#ffd166'];
 const COLOR_NAMES = ['Cyan',    'Orange',  'Green',   'Pink',    'Purple',  'Gold'   ];
 const MAX_NAME    = 12;
@@ -144,11 +155,19 @@ export class OnlineLobbyScene extends Scene {
       this._mouse.y = (e.clientY - r.top)  * (this.game.canvas.height / r.height);
     };
     this._onMouseDown = (e) => {
-      const r = this.game.canvas.getBoundingClientRect();
-      this._pendingClick = {
+      const r  = this.game.canvas.getBoundingClientRect();
+      const pt = {
         x: (e.clientX - r.left) * (this.game.canvas.width  / r.width),
         y: (e.clientY - r.top)  * (this.game.canvas.height / r.height),
       };
+      // Copy must happen synchronously inside the event handler so Safari's
+      // user-gesture context is still active (it expires after one async tick).
+      if (this._role === 'host' && this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
+        _copyToClipboard(this._code);
+        this._copyFeedback = 1.5;
+        return;   // skip pendingClick — no further action needed
+      }
+      this._pendingClick = pt;
     };
 
     this.game.canvas.addEventListener('mousemove', this._onMouseMove);
@@ -288,17 +307,7 @@ export class OnlineLobbyScene extends Scene {
     if (this._kicked) return;
 
     // Copy code button
-    if (this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
-      // Textarea trick — works unconditionally without clipboard-write permission
-      const ta = document.createElement('textarea');
-      ta.value = this._code;
-      Object.assign(ta.style, { position: 'fixed', top: '0', left: '0', opacity: '0', pointerEvents: 'none' });
-      document.body.appendChild(ta);
-      ta.focus(); ta.select();
-      try { document.execCommand('copy'); } catch (_) {}
-      ta.remove();
-      this._copyFeedback = 1.5; return;
-    }
+    // Copy is handled synchronously in _onMouseDown — nothing to do here.
 
     const isHost = this._role === 'host';
 

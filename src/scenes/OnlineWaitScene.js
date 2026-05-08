@@ -48,11 +48,24 @@ export class OnlineWaitScene extends Scene {
       this._mouse.y = (e.clientY - r.top)  * (this.game.canvas.height / r.height);
     };
     this._onMouseDown = (e) => {
-      const r = this.game.canvas.getBoundingClientRect();
-      this._pendingClick = {
+      const r  = this.game.canvas.getBoundingClientRect();
+      const pt = {
         x: (e.clientX - r.left) * (this.game.canvas.width  / r.width),
         y: (e.clientY - r.top)  * (this.game.canvas.height / r.height),
       };
+      // Clipboard read must happen synchronously in the event handler (Safari gesture context)
+      if (this._phase === 'joining') {
+        const W = this.game.canvas.width;
+        const H = this.game.canvas.height;
+        if (this._hit(this._pasteBtn(W, H), pt)) {
+          this._hiddenInput?.focus();
+          navigator.clipboard?.readText()
+            .then(t => this._applyPaste(t))
+            .catch(() => { this._pastePrompt = 2.5; });
+          return;  // skip pendingClick
+        }
+      }
+      this._pendingClick = pt;
     };
     this._onKeyDown = (ev) => this._handleKey(ev);
 
@@ -126,23 +139,7 @@ export class OnlineWaitScene extends Scene {
       }
     }
 
-    if (this._phase === 'joining') {
-      if (this._hit(this._pasteBtn(W, H), pt)) {
-        // Always focus hidden input first — ensures Cmd/Ctrl+V works immediately
-        this._hiddenInput?.focus();
-        // Try clipboard API (works in Chrome; Safari may block it)
-        if (navigator.clipboard?.readText) {
-          navigator.clipboard.readText()
-            .then(t => this._applyPaste(t))
-            .catch(() => {
-              // Clipboard API blocked (common in Safari) — show "Press ⌘V" prompt
-              this._pastePrompt = 2.5;
-            });
-        } else {
-          this._pastePrompt = 2.5;
-        }
-      }
-    }
+    // Paste button is handled synchronously in _onMouseDown — nothing to do here.
   }
 
   _pasteBtn(W, H) {
