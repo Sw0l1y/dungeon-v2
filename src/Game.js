@@ -4,7 +4,7 @@ import { InputBinding } from './systems/InputBinding.js';
 import { BINDINGS } from './systems/bindings.js';
 import { TitleScene } from './scenes/TitleScene.js';
 
-export const VERSION = 'v0.9.5';
+export const VERSION = 'v0.10.0';
 
 export class Game {
   constructor(canvas) {
@@ -24,9 +24,19 @@ export class Game {
     this.state = {}; // shared bag — scenes write here before transitioning
     this._lastTime = 0;
     this._rafId = null;
+
+    // Campaign map data — loaded async from src/data/maps.json
+    this.maps       = null;   // full parsed object { mapVersion, campaign: [...] }
+    this.mapVersion = null;   // e.g. 'map-v1.0'
   }
 
   start() {
+    // Non-blocking fetch — completes long before the player reaches GameScene
+    fetch('src/data/maps.json')
+      .then(r => r.json())
+      .then(data => { this.maps = data; this.mapVersion = data.mapVersion ?? null; })
+      .catch(() => { /* fall back to built-in Level1 */ });
+
     this.scenes.push(new TitleScene(this));
     this._rafId = requestAnimationFrame(this._loop.bind(this));
   }
@@ -42,7 +52,8 @@ export class Game {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'bottom';
     ctx.fillStyle = 'rgba(255,255,255,0.22)';
-    ctx.fillText(VERSION, 10, this.canvas.height - 8);
+    const label = this.mapVersion ? `${VERSION}  |  ${this.mapVersion}` : VERSION;
+    ctx.fillText(label, 10, this.canvas.height - 8);
     ctx.restore();
   }
 

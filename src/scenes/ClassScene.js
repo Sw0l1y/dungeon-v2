@@ -196,6 +196,7 @@ export class ClassScene extends Scene {
       ...p,
       classId: this._selections[i] ?? 'sword',
     }));
+    this.game.state.roomIndex = 0;  // always start campaign from room 0
     this.game.scenes.switch(new GameScene(this.game));
   }
 

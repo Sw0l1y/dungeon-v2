@@ -26,6 +26,11 @@ export class Portal {
     this._closeT     = 0;
     this._closeScale = 1;   // 1 → 0 during close
 
+    // Room-advance callback (injected by GameScene at spawn time)
+    this.onEnter   = null;
+    this._triggered = false;
+    this._triggerT  = 0;
+
     this._particles = [];
     this._initParticles();
   }
@@ -109,6 +114,27 @@ export class Portal {
         } else {
           this._particles[i] = this._makeParticle(false);
         }
+      }
+    }
+
+    // ── Entry trigger — player in pull zone presses interact ────────────────
+    if (!this._triggered && this.onEnter) {
+      for (const pl of this.level.players) {
+        if (!pl.alive) continue;
+        const dist = Math.hypot(this.x - pl.x, this.y - pl.y);
+        if (dist < PULL_STRONG && pl.binding?.justPressed?.('interact')) {
+          this._triggered = true;
+          this._triggerT  = 0;
+          break;
+        }
+      }
+    }
+
+    if (this._triggered) {
+      this._triggerT += dt;
+      if (this._triggerT >= 0.55) {
+        this.onEnter?.();
+        return;
       }
     }
 
@@ -292,11 +318,26 @@ export class Portal {
     );
     if (nearPlayer) {
       const ta = 0.62 + 0.32 * Math.sin(t / 210);
-      ctx.fillStyle    = `rgba(200,160,255,${ta})`;
-      ctx.font         = 'bold 11px "Trebuchet MS", sans-serif';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
-      ctx.fillText('— THE VOID AWAITS —', x, y - R - 14);
+      if (this._triggered) {
+        // Fade in "entering" text during the 0.55s transition delay
+        const p = Math.min(1, this._triggerT / 0.55);
+        ctx.fillStyle = `rgba(255,245,255,${ta * p})`;
+        ctx.font      = 'bold 12px "Trebuchet MS", sans-serif';
+        ctx.fillText('Entering the Void…', x, y - R - 14);
+      } else if (this.onEnter) {
+        ctx.fillStyle = `rgba(200,160,255,${ta})`;
+        ctx.font      = 'bold 11px "Trebuchet MS", sans-serif';
+        ctx.fillText('— THE VOID AWAITS —', x, y - R - 26);
+        ctx.font      = '10px "Trebuchet MS", sans-serif';
+        ctx.fillStyle = `rgba(180,140,255,${ta * 0.75})`;
+        ctx.fillText('[ E / O ]  enter', x, y - R - 12);
+      } else {
+        ctx.fillStyle = `rgba(200,160,255,${ta})`;
+        ctx.font      = 'bold 11px "Trebuchet MS", sans-serif';
+        ctx.fillText('— THE VOID AWAITS —', x, y - R - 14);
+      }
     }
   }
 }

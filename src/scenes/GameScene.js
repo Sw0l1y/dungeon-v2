@@ -1,6 +1,7 @@
 import { Scene          } from './Scene.js';
 import { Camera         } from '../systems/Camera.js';
 import { Level1         } from '../levels/Level1.js';
+import { DynamicLevel   } from '../levels/DynamicLevel.js';
 import { WaveManager    } from '../systems/WaveManager.js';
 import { DeathScene     } from './DeathScene.js';
 import { PauseScene     } from './PauseScene.js';
@@ -12,7 +13,10 @@ import { EnemyProjectile} from '../entities/EnemyProjectile.js';
 
 export class GameScene extends Scene {
   onEnter() {
-    this.level  = new Level1(this.game);
+    // Load the room for the current campaign index, fall back to built-in Level1
+    const roomIdx = this.game.state.roomIndex ?? 0;
+    const roomCfg = this.game.maps?.campaign?.[roomIdx];
+    this.level = roomCfg ? new DynamicLevel(this.game, roomCfg) : new Level1(this.game);
     this.camera = new Camera(this.game.canvas.width, this.game.canvas.height);
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
@@ -151,7 +155,22 @@ export class GameScene extends Scene {
       : this.waves.bossDefeated;
 
     if (bossDefeated && !this._portalSpawned) {
-      this.level.addEntity(new Portal(this.level, this._introCX, this._introCY));
+      const portal = new Portal(this.level, this._introCX, this._introCY);
+      // Callback to advance rooms — avoids circular import between Portal and GameScene
+      portal.onEnter = () => {
+        const game     = this.game;
+        const campaign = game.maps?.campaign;
+        const nextIdx  = (game.state.roomIndex ?? 0) + 1;
+        if (campaign && nextIdx < campaign.length) {
+          game.state.roomIndex = nextIdx;
+          game.scenes.switch(new GameScene(game));
+        } else {
+          // Campaign complete — reset and return to title
+          game.state.roomIndex = 0;
+          game.scenes.switch(new TitleScene(game));
+        }
+      };
+      this.level.addEntity(portal);
       this._portalSpawned = true;
     }
 
@@ -624,7 +643,20 @@ export class GameScene extends Scene {
       };
       // Spawn portal once host flags boss defeated
       if (this._remoteWave.bd && !this._portalSpawned) {
-        this.level.addEntity(new Portal(this.level, this._introCX, this._introCY));
+        const portal = new Portal(this.level, this._introCX, this._introCY);
+        portal.onEnter = () => {
+          const game    = this.game;
+          const campaign = game.maps?.campaign;
+          const nextIdx  = (game.state.roomIndex ?? 0) + 1;
+          if (campaign && nextIdx < campaign.length) {
+            game.state.roomIndex = nextIdx;
+            game.scenes.switch(new GameScene(game));
+          } else {
+            game.state.roomIndex = 0;
+            game.scenes.switch(new TitleScene(game));
+          }
+        };
+        this.level.addEntity(portal);
         this._portalSpawned = true;
       }
     }

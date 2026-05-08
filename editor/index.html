@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dungeon Map Editor</title>
+  <style>
+    :root {
+      --bg:       #07111c;
+      --panel:    rgba(255,255,255,0.04);
+      --border:   rgba(140,243,255,0.14);
+      --accent:   #8cf3ff;
+      --text:     rgba(255,255,255,0.82);
+      --muted:    rgba(255,255,255,0.35);
+      --danger:   #ff6b6b;
+      color-scheme: dark;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: "Trebuchet MS", "Segoe UI", sans-serif; overflow: hidden; }
+
+    /* ── Layout ─────────────────────────────────────────────────────────────── */
+    #app { display: flex; flex-direction: column; height: 100vh; }
+
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px;
+      background: rgba(0,0,0,0.3);
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 15px; font-weight: 700; color: var(--accent); letter-spacing: 0.05em; }
+    header .spacer { flex: 1; }
+    #map-version-display {
+      font-size: 12px; color: var(--muted);
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; padding: 4px 10px;
+    }
+
+    main { display: flex; flex: 1; overflow: hidden; }
+
+    /* ── Timeline (left) ─────────────────────────────────────────────────────── */
+    #timeline {
+      width: 200px; flex-shrink: 0;
+      display: flex; flex-direction: column;
+      border-right: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+      overflow: hidden;
+    }
+    #timeline-header {
+      padding: 10px 12px 6px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.08em; color: var(--muted);
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #room-list { flex: 1; overflow-y: auto; padding: 6px; }
+    #room-list::-webkit-scrollbar { width: 4px; }
+    #room-list::-webkit-scrollbar-track { background: transparent; }
+    #room-list::-webkit-scrollbar-thumb { background: rgba(140,243,255,0.2); border-radius: 2px; }
+
+    .room-card {
+      display: flex; align-items: center; gap: 6px;
+      padding: 7px 8px;
+      margin-bottom: 4px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      cursor: pointer;
+      transition: border-color 0.12s, background 0.12s;
+      user-select: none;
+    }
+    .room-card:hover { border-color: rgba(140,243,255,0.35); background: rgba(140,243,255,0.06); }
+    .room-card.active { border-color: var(--accent); background: rgba(140,243,255,0.1); }
+    .room-card.drag-over { border-color: rgba(140,243,255,0.7); background: rgba(140,243,255,0.12); }
+    .room-card .drag-handle {
+      cursor: grab; color: var(--muted); font-size: 13px; flex-shrink: 0; line-height: 1;
+    }
+    .room-card .room-index {
+      font-size: 10px; color: var(--muted); font-weight: 700; min-width: 14px;
+    }
+    .room-card .room-name { flex: 1; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .room-card .del-btn {
+      background: none; border: none; cursor: pointer;
+      color: rgba(255,100,100,0.45); font-size: 14px; line-height: 1;
+      padding: 0 2px; flex-shrink: 0;
+      transition: color 0.12s;
+    }
+    .room-card .del-btn:hover { color: var(--danger); }
+
+    #add-room-btn {
+      margin: 8px 8px 10px;
+      padding: 7px; width: calc(100% - 16px);
+      background: rgba(140,243,255,0.06);
+      border: 1px dashed rgba(140,243,255,0.3);
+      border-radius: 8px;
+      color: rgba(140,243,255,0.7);
+      font-family: inherit; font-size: 12px; font-weight: 700;
+      cursor: pointer; transition: all 0.12s; flex-shrink: 0;
+    }
+    #add-room-btn:hover { background: rgba(140,243,255,0.1); border-color: var(--accent); color: var(--accent); }
+
+    /* ── Canvas area (center) ─────────────────────────────────────────────────── */
+    #canvas-area {
+      flex: 1; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-start;
+      overflow: auto; padding: 16px;
+      background: rgba(0,0,0,0.05);
+    }
+    #canvas-area::-webkit-scrollbar { width: 6px; height: 6px; }
+    #canvas-area::-webkit-scrollbar-track { background: transparent; }
+    #canvas-area::-webkit-scrollbar-thumb { background: rgba(140,243,255,0.2); border-radius: 3px; }
+
+    #canvas-wrap {
+      position: relative; display: inline-block;
+      border: 2px solid var(--border); border-radius: 10px; overflow: hidden;
+      box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+    }
+    #canvas-wrap.spawn-mode canvas { cursor: crosshair; }
+    canvas#editor-canvas { display: block; image-rendering: pixelated; }
+
+    /* ── Toolbox (right) ─────────────────────────────────────────────────────── */
+    #toolbox {
+      width: 200px; flex-shrink: 0;
+      display: flex; flex-direction: column; gap: 0;
+      border-left: 1px solid var(--border);
+      background: rgba(0,0,0,0.15);
+      overflow-y: auto; padding: 12px;
+    }
+    #toolbox::-webkit-scrollbar { width: 4px; }
+    #toolbox::-webkit-scrollbar-thumb { background: rgba(140,243,255,0.2); border-radius: 2px; }
+
+    .tool-section { margin-bottom: 18px; }
+    .tool-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+      color: var(--muted); text-transform: uppercase;
+      margin-bottom: 7px;
+    }
+
+    .tile-btn {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 7px 10px; margin-bottom: 4px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 7px; cursor: pointer; color: var(--text);
+      font-family: inherit; font-size: 12px;
+      transition: all 0.1s; text-align: left;
+    }
+    .tile-btn:hover { border-color: rgba(140,243,255,0.35); background: rgba(140,243,255,0.06); }
+    .tile-btn.active { border-color: var(--accent); background: rgba(140,243,255,0.1); color: var(--accent); }
+    .tile-swatch {
+      width: 16px; height: 16px; border-radius: 3px; flex-shrink: 0;
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    .tile-btn .shortcut {
+      margin-left: auto; font-size: 10px; color: var(--muted);
+      background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 5px;
+    }
+
+    .spawn-btn {
+      display: flex; align-items: center; gap: 8px;
+      width: 100%; padding: 7px 10px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 7px; cursor: pointer; color: var(--text);
+      font-family: inherit; font-size: 12px; transition: all 0.1s;
+    }
+    .spawn-btn:hover { border-color: rgba(255,200,100,0.5); background: rgba(255,200,100,0.06); }
+    .spawn-btn.active { border-color: #ffd24c; background: rgba(255,210,76,0.1); color: #ffd24c; }
+
+    #room-name-input {
+      width: 100%; padding: 7px 9px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      border-radius: 7px; color: var(--text);
+      font-family: inherit; font-size: 12px;
+      transition: border-color 0.12s; outline: none;
+    }
+    #room-name-input:focus { border-color: rgba(140,243,255,0.5); }
+
+    #map-version-input {
+      width: 100%; padding: 7px 9px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      border-radius: 7px; color: var(--accent);
+      font-family: inherit; font-size: 12px;
+      transition: border-color 0.12s; outline: none;
+    }
+    #map-version-input:focus { border-color: rgba(140,243,255,0.5); }
+
+    .hint { font-size: 10px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+
+    /* ── Header buttons ─────────────────────────────────────────────────────── */
+    .hdr-btn {
+      padding: 5px 13px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 7px; color: var(--text);
+      font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+      transition: all 0.12s;
+    }
+    .hdr-btn:hover { border-color: rgba(140,243,255,0.5); background: rgba(140,243,255,0.08); color: var(--accent); }
+    .hdr-btn.primary { border-color: rgba(140,243,255,0.4); color: var(--accent); }
+    .hdr-btn.primary:hover { border-color: var(--accent); background: rgba(140,243,255,0.12); }
+
+    /* ── Notification toast ─────────────────────────────────────────────────── */
+    #toast {
+      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+      background: rgba(10,20,35,0.95); border: 1px solid var(--accent);
+      border-radius: 8px; padding: 8px 18px; font-size: 13px; color: var(--accent);
+      pointer-events: none; opacity: 0; transition: opacity 0.25s;
+    }
+    #toast.show { opacity: 1; }
+
+    /* ── Resize controls ─────────────────────────────────────────────────────── */
+    .resize-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .resize-row label { font-size: 11px; color: var(--muted); min-width: 36px; }
+    .resize-input {
+      width: 52px; padding: 4px 6px;
+      background: rgba(255,255,255,0.06); border: 1px solid var(--border);
+      border-radius: 5px; color: var(--text);
+      font-family: inherit; font-size: 12px; text-align: center; outline: none;
+    }
+    .resize-input:focus { border-color: rgba(140,243,255,0.5); }
+    .resize-apply {
+      flex: 1; padding: 4px;
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 5px; color: var(--muted);
+      font-family: inherit; font-size: 11px; cursor: pointer;
+      transition: all 0.1s;
+    }
+    .resize-apply:hover { border-color: rgba(140,243,255,0.5); color: var(--accent); }
+  </style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>⬡ DUNGEON MAP EDITOR</h1>
+    <span class="spacer"></span>
+    <span id="map-version-display">map-v1.0</span>
+    <button class="hdr-btn" id="btn-load">📂 Load</button>
+    <button class="hdr-btn primary" id="btn-save">💾 Save</button>
+    <button class="hdr-btn" id="btn-download">⬇ Download</button>
+  </header>
+
+  <main>
+    <!-- Timeline -->
+    <aside id="timeline">
+      <div id="timeline-header">Campaign Rooms</div>
+      <div id="room-list"></div>
+      <button id="add-room-btn">＋ Add Room</button>
+    </aside>
+
+    <!-- Canvas -->
+    <div id="canvas-area">
+      <div id="canvas-wrap">
+        <canvas id="editor-canvas"></canvas>
+      </div>
+    </div>
+
+    <!-- Toolbox -->
+    <aside id="toolbox">
+      <div class="tool-section">
+        <div class="tool-label">Tile Type</div>
+        <button class="tile-btn" data-tile="0">
+          <span class="tile-swatch" style="background:#22304a"></span>
+          Floor
+          <span class="shortcut">1</span>
+        </button>
+        <button class="tile-btn" data-tile="1">
+          <span class="tile-swatch" style="background:#1a2340"></span>
+          Wall (perm)
+          <span class="shortcut">2</span>
+        </button>
+        <button class="tile-btn" data-tile="2">
+          <span class="tile-swatch" style="background:#1a3340; border-color:rgba(91,195,255,0.4)"></span>
+          Wall (destr)
+          <span class="shortcut">3</span>
+        </button>
+      </div>
+
+      <div class="tool-section">
+        <div class="tool-label">Spawn Point</div>
+        <button class="spawn-btn" id="spawn-mode-btn">
+          ⚑ Set Spawn
+          <span class="shortcut" style="margin-left:auto;font-size:10px;color:var(--muted);background:rgba(255,255,255,0.06);border-radius:4px;padding:1px 5px;">4</span>
+        </button>
+        <p class="hint">Click a floor tile to place the player spawn point.</p>
+      </div>
+
+      <div class="tool-section">
+        <div class="tool-label">Room Name</div>
+        <input type="text" id="room-name-input" placeholder="Room name…" />
+      </div>
+
+      <div class="tool-section">
+        <div class="tool-label">Grid Size</div>
+        <div class="resize-row">
+          <label>Cols</label>
+          <input type="number" class="resize-input" id="cols-input" min="10" max="60" value="30" />
+          <button class="resize-apply" id="apply-resize">Apply</button>
+        </div>
+        <div class="resize-row">
+          <label>Rows</label>
+          <input type="number" class="resize-input" id="rows-input" min="8" max="40" value="17" />
+        </div>
+        <p class="hint">Shrinking crops tiles from right/bottom edge.</p>
+      </div>
+
+      <div class="tool-section">
+        <div class="tool-label">Map Version</div>
+        <input type="text" id="map-version-input" value="map-v1.0" />
+        <p class="hint">Auto-increments patch on save. Edit freely.</p>
+      </div>
+    </aside>
+  </main>
+</div>
+
+<div id="toast">Saved!</div>
+
+<script>
+// ── Constants ──────────────────────────────────────────────────────────────
+const TILE_PX = 24;   // editor tile size (px)
+
+const TILE_COLORS = {
+  0: { fill: '#22304a', stroke: null },                            // floor
+  1: { fill: '#1a2340', stroke: 'rgba(91,195,255,0.12)' },        // perm wall
+  2: { fill: '#162e3a', stroke: 'rgba(91,195,255,0.32)' },        // destr wall
+};
+
+// ── State ─────────────────────────────────────────────────────────────────
+let state = {
+  mapVersion: 'map-v1.0',
+  campaign: [],
+};
+let activeRoom = 0;   // index into campaign
+let activeTile = 1;   // 0,1,2
+let spawnMode  = false;
+let painting   = false;
+let fsHandle   = null;  // FileSystemFileHandle (FS Access API)
+let dragSrc    = null;  // room index being dragged
+
+// ── DOM ──────────────────────────────────────────────────────────────────
+const canvas     = document.getElementById('editor-canvas');
+const ctx        = canvas.getContext('2d');
+const roomList   = document.getElementById('room-list');
+const nameInput  = document.getElementById('room-name-input');
+const verInput   = document.getElementById('map-version-input');
+const verDisplay = document.getElementById('map-version-display');
+const colsInput  = document.getElementById('cols-input');
+const rowsInput  = document.getElementById('rows-input');
+const toast      = document.getElementById('toast');
+let toastTimer   = null;
+
+// ── Init ─────────────────────────────────────────────────────────────────
+function initDefaultCampaign() {
+  state.campaign = [makeBlankRoom('Room 1')];
+  activeRoom = 0;
+}
+
+function makeBlankRoom(name) {
+  const cols = 30, rows = 17;
+  const tiles = [];
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      row.push((r === 0 || r === rows-1 || c === 0 || c === cols-1) ? 1 : 0);
+    }
+    tiles.push(row);
+  }
+  return {
+    id: genId(),
+    name,
+    cols,
+    rows,
+    tileSize: 40,
+    playerSpawn: { col: Math.floor(cols/2), row: Math.floor(rows/2) },
+    tiles,
+  };
+}
+
+function genId() {
+  return 'room-' + Math.random().toString(36).slice(2,9);
+}
+
+// Seed from Level1 map if no saved data
+function seedLevel1() {
+  const MAP = [
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,1],
+    [1,0,0,2,0,0,0,0,0,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,0,2,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,1],
+    [1,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,1],
+    [1,0,0,0,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,2,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,2,2,2,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,0,1],
+    [1,0,0,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,2,2,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+    [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+  ];
+  state.campaign = [{
+    id: genId(),
+    name: 'The Entrance',
+    cols: 30, rows: 17,
+    tileSize: 40,
+    playerSpawn: { col: 15, row: 8 },
+    tiles: MAP.map(r => [...r]),
+  }];
+  activeRoom = 0;
+}
+
+// ── Canvas render ────────────────────────────────────────────────────────
+function resizeCanvas(room) {
+  canvas.width  = room.cols * TILE_PX;
+  canvas.height = room.rows * TILE_PX;
+}
+
+function render() {
+  const room = state.campaign[activeRoom];
+  if (!room) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  for (let r = 0; r < room.rows; r++) {
+    for (let c = 0; c < room.cols; c++) {
+      const t = room.tiles[r]?.[c] ?? 0;
+      const scheme = TILE_COLORS[t] ?? TILE_COLORS[0];
+      ctx.fillStyle = scheme.fill;
+      ctx.fillRect(c * TILE_PX, r * TILE_PX, TILE_PX, TILE_PX);
+      if (scheme.stroke) {
+        ctx.strokeStyle = scheme.stroke;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(c * TILE_PX + 0.5, r * TILE_PX + 0.5, TILE_PX - 1, TILE_PX - 1);
+      }
+    }
+  }
+
+  // Grid lines
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 0.5;
+  for (let r = 0; r <= room.rows; r++) {
+    ctx.beginPath(); ctx.moveTo(0, r * TILE_PX); ctx.lineTo(room.cols * TILE_PX, r * TILE_PX); ctx.stroke();
+  }
+  for (let c = 0; c <= room.cols; c++) {
+    ctx.beginPath(); ctx.moveTo(c * TILE_PX, 0); ctx.lineTo(c * TILE_PX, room.rows * TILE_PX); ctx.stroke();
+  }
+
+  // Spawn point
+  const sp = room.playerSpawn;
+  const sx = (sp.col + 0.5) * TILE_PX;
+  const sy = (sp.row + 0.5) * TILE_PX;
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  ctx.fillStyle = '#ffd24c';
+  ctx.beginPath();
+  ctx.arc(sx, sy, TILE_PX * 0.3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#07111c';
+  ctx.font = `bold ${TILE_PX * 0.38}px monospace`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('P', sx, sy + 1);
+  ctx.restore();
+}
+
+// ── Timeline UI ──────────────────────────────────────────────────────────
+function buildTimeline() {
+  roomList.innerHTML = '';
+  state.campaign.forEach((room, i) => {
+    const card = document.createElement('div');
+    card.className = 'room-card' + (i === activeRoom ? ' active' : '');
+    card.draggable = true;
+    card.dataset.idx = i;
+
+    card.innerHTML = `
+      <span class="drag-handle" title="Drag to reorder">⠿</span>
+      <span class="room-index">${i + 1}</span>
+      <span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span>
+      <button class="del-btn" title="Delete room" data-idx="${i}">✕</button>
+    `;
+
+    card.addEventListener('click', (e) => {
+      if (e.target.classList.contains('del-btn')) return;
+      selectRoom(i);
+    });
+    card.querySelector('.del-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      deleteRoom(i);
+    });
+
+    // Drag events
+    card.addEventListener('dragstart', (e) => {
+      dragSrc = i;
+      e.dataTransfer.effectAllowed = 'move';
+      setTimeout(() => card.style.opacity = '0.4', 0);
+    });
+    card.addEventListener('dragend', () => {
+      card.style.opacity = '';
+      document.querySelectorAll('.room-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      document.querySelectorAll('.room-card').forEach(c => c.classList.remove('drag-over'));
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (dragSrc === null || dragSrc === i) return;
+      moveRoom(dragSrc, i);
+      dragSrc = null;
+    });
+
+    roomList.appendChild(card);
+  });
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function selectRoom(i) {
+  activeRoom = i;
+  const room = state.campaign[i];
+  nameInput.value  = room.name;
+  colsInput.value  = room.cols;
+  rowsInput.value  = room.rows;
+  resizeCanvas(room);
+  buildTimeline();
+  render();
+}
+
+function deleteRoom(i) {
+  if (state.campaign.length <= 1) { showToast('Cannot delete last room'); return; }
+  state.campaign.splice(i, 1);
+  if (activeRoom >= state.campaign.length) activeRoom = state.campaign.length - 1;
+  selectRoom(activeRoom);
+}
+
+function moveRoom(from, to) {
+  const [room] = state.campaign.splice(from, 1);
+  state.campaign.splice(to, 0, room);
+  activeRoom = to;
+  selectRoom(activeRoom);
+}
+
+// ── Tile painting ─────────────────────────────────────────────────────────
+function tileAt(e) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width  / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const px = (e.clientX - rect.left) * scaleX;
+  const py = (e.clientY - rect.top)  * scaleY;
+  return {
+    col: Math.floor(px / TILE_PX),
+    row: Math.floor(py / TILE_PX),
+  };
+}
+
+function paintAt(e) {
+  const room = state.campaign[activeRoom];
+  const { col, row } = tileAt(e);
+  if (col < 0 || col >= room.cols || row < 0 || row >= room.rows) return;
+
+  if (spawnMode) {
+    if (room.tiles[row][col] === 0) {
+      room.playerSpawn = { col, row };
+      setSpawnMode(false);
+      render();
+    }
+    return;
+  }
+
+  const tile = e.button === 2 ? 0 : activeTile;
+  if (room.tiles[row][col] !== tile) {
+    room.tiles[row][col] = tile;
+    render();
+  }
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  painting = true;
+  paintAt(e);
+});
+canvas.addEventListener('mousemove', (e) => {
+  if (!painting) return;
+  paintAt(e);
+});
+canvas.addEventListener('mouseup',   () => { painting = false; });
+canvas.addEventListener('mouseleave',() => { painting = false; });
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ── Spawn mode ────────────────────────────────────────────────────────────
+const spawnBtn = document.getElementById('spawn-mode-btn');
+function setSpawnMode(on) {
+  spawnMode = on;
+  spawnBtn.classList.toggle('active', on);
+  document.getElementById('canvas-wrap').classList.toggle('spawn-mode', on);
+}
+spawnBtn.addEventListener('click', () => setSpawnMode(!spawnMode));
+
+// ── Tile type buttons ─────────────────────────────────────────────────────
+document.querySelectorAll('.tile-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    activeTile = parseInt(btn.dataset.tile);
+    setSpawnMode(false);
+    updateTileButtons();
+  });
+});
+function updateTileButtons() {
+  document.querySelectorAll('.tile-btn').forEach(btn => {
+    btn.classList.toggle('active', parseInt(btn.dataset.tile) === activeTile);
+  });
+}
+
+// ── Keyboard shortcuts ────────────────────────────────────────────────────
+window.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.key === '1') { activeTile = 0; setSpawnMode(false); updateTileButtons(); }
+  if (e.key === '2') { activeTile = 1; setSpawnMode(false); updateTileButtons(); }
+  if (e.key === '3') { activeTile = 2; setSpawnMode(false); updateTileButtons(); }
+  if (e.key === '4') { setSpawnMode(!spawnMode); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveFile(); }
+});
+
+// ── Room name input ───────────────────────────────────────────────────────
+nameInput.addEventListener('input', () => {
+  const room = state.campaign[activeRoom];
+  if (room) { room.name = nameInput.value || 'Unnamed'; buildTimeline(); }
+});
+
+// ── Map version input ─────────────────────────────────────────────────────
+verInput.addEventListener('input', () => {
+  state.mapVersion = verInput.value;
+  verDisplay.textContent = state.mapVersion;
+});
+
+// ── Resize ────────────────────────────────────────────────────────────────
+document.getElementById('apply-resize').addEventListener('click', () => {
+  const room = state.campaign[activeRoom];
+  const newCols = Math.max(10, Math.min(60, parseInt(colsInput.value) || room.cols));
+  const newRows = Math.max(8,  Math.min(40, parseInt(rowsInput.value) || room.rows));
+
+  // Resize tile array
+  const newTiles = [];
+  for (let r = 0; r < newRows; r++) {
+    const row = [];
+    for (let c = 0; c < newCols; c++) {
+      const existingTile = room.tiles[r]?.[c];
+      // Border = wall (1), otherwise keep existing or default to floor
+      const isBorder = r === 0 || r === newRows-1 || c === 0 || c === newCols-1;
+      row.push(existingTile !== undefined ? existingTile : (isBorder ? 1 : 0));
+    }
+    newTiles.push(row);
+  }
+  room.tiles = newTiles;
+  room.cols  = newCols;
+  room.rows  = newRows;
+
+  // Clamp spawn
+  room.playerSpawn.col = Math.min(room.playerSpawn.col, newCols - 2);
+  room.playerSpawn.row = Math.min(room.playerSpawn.row, newRows - 2);
+
+  colsInput.value = newCols;
+  rowsInput.value = newRows;
+  resizeCanvas(room);
+  render();
+  showToast(`Resized to ${newCols}×${newRows}`);
+});
+
+// ── Add room ─────────────────────────────────────────────────────────────
+document.getElementById('add-room-btn').addEventListener('click', () => {
+  const n = state.campaign.length + 1;
+  state.campaign.push(makeBlankRoom(`Room ${n}`));
+  selectRoom(state.campaign.length - 1);
+  showToast('Room added');
+});
+
+// ── Serialise ─────────────────────────────────────────────────────────────
+function buildJSON() {
+  const out = {
+    mapVersion: state.mapVersion,
+    campaign: state.campaign.map(r => ({
+      id:          r.id,
+      name:        r.name,
+      cols:        r.cols,
+      rows:        r.rows,
+      tileSize:    r.tileSize ?? 40,
+      playerSpawn: { ...r.playerSpawn },
+      tiles:       r.tiles.map(row => [...row]),
+    })),
+  };
+  return JSON.stringify(out, null, 2);
+}
+
+// ── Parse ─────────────────────────────────────────────────────────────────
+function loadJSON(text) {
+  let data;
+  try { data = JSON.parse(text); } catch { showToast('Invalid JSON'); return; }
+  if (!data.campaign?.length) { showToast('No campaign data found'); return; }
+
+  state.mapVersion = data.mapVersion ?? 'map-v1.0';
+  state.campaign   = data.campaign.map(r => ({
+    id:          r.id || genId(),
+    name:        r.name || 'Room',
+    cols:        r.cols || r.tiles[0].length,
+    rows:        r.rows || r.tiles.length,
+    tileSize:    r.tileSize || 40,
+    playerSpawn: r.playerSpawn ? { ...r.playerSpawn } : { col: Math.floor((r.cols||30)/2), row: Math.floor((r.rows||17)/2) },
+    tiles:       r.tiles.map(row => [...row]),
+  }));
+
+  verInput.value   = state.mapVersion;
+  verDisplay.textContent = state.mapVersion;
+  activeRoom = 0;
+  selectRoom(0);
+}
+
+// Auto-increment map version patch on save
+function bumpVersion() {
+  const v = state.mapVersion ?? 'map-v1.0';
+  const m = v.match(/^(.*?)(\d+)$/);
+  if (m) {
+    const newVer = m[1] + (parseInt(m[2]) + 1);
+    state.mapVersion = newVer;
+    verInput.value  = newVer;
+    verDisplay.textContent = newVer;
+  }
+}
+
+// ── File System Access API save ────────────────────────────────────────────
+async function saveFile() {
+  bumpVersion();
+  const json = buildJSON();
+
+  if (window.showSaveFilePicker) {
+    try {
+      if (!fsHandle) {
+        fsHandle = await window.showSaveFilePicker({
+          suggestedName: 'maps.json',
+          types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+        });
+      }
+      const writable = await fsHandle.createWritable();
+      await writable.write(json);
+      await writable.close();
+      showToast(`Saved — ${state.mapVersion}`);
+    } catch (err) {
+      if (err.name !== 'AbortError') { showToast('Save failed'); console.error(err); }
+      // If cancelled, roll back version bump
+    }
+  } else {
+    downloadJSON(json);
+  }
+}
+
+// ── Load ──────────────────────────────────────────────────────────────────
+async function loadFile() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }],
+      });
+      fsHandle = handle;
+      const file = await handle.getFile();
+      const text = await file.text();
+      loadJSON(text);
+      showToast('Loaded');
+    } catch (err) {
+      if (err.name !== 'AbortError') { showToast('Load failed'); console.error(err); }
+    }
+  } else {
+    // Fallback: file input
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = '.json';
+    inp.addEventListener('change', async () => {
+      if (!inp.files[0]) return;
+      loadJSON(await inp.files[0].text());
+      showToast('Loaded');
+    });
+    inp.click();
+  }
+}
+
+// ── Download fallback ─────────────────────────────────────────────────────
+function downloadJSON(json) {
+  const blob = new Blob([json], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'maps.json';
+  a.click();
+  URL.revokeObjectURL(url);
+  showToast(`Downloaded — ${state.mapVersion}`);
+}
+
+// ── Button listeners ──────────────────────────────────────────────────────
+document.getElementById('btn-save').addEventListener('click', saveFile);
+document.getElementById('btn-load').addEventListener('click', loadFile);
+document.getElementById('btn-download').addEventListener('click', () => {
+  bumpVersion();
+  downloadJSON(buildJSON());
+});
+
+// ── Toast ─────────────────────────────────────────────────────────────────
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
+// ── Bootstrap ─────────────────────────────────────────────────────────────
+(function init() {
+  seedLevel1();
+  verInput.value = state.mapVersion;
+  verDisplay.textContent = state.mapVersion;
+  updateTileButtons();
+
+  // Try to auto-load maps.json from the same server (works when served via local HTTP)
+  fetch('../src/data/maps.json')
+    .then(r => { if (!r.ok) throw new Error('not found'); return r.json(); })
+    .then(data => {
+      loadJSON(JSON.stringify(data));
+      showToast('Auto-loaded maps.json');
+    })
+    .catch(() => {
+      // No auto-load available — use seeded Level1 data
+      selectRoom(0);
+    });
+})();
+</script>
+</body>
+</html>
