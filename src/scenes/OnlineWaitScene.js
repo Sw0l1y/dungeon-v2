@@ -23,7 +23,8 @@ export class OnlineWaitScene extends Scene {
 
     this._mouse         = { x: 0, y: 0 };
     this._pendingClick  = null;
-    this._pasteFeedback = 0;   // > 0 → show "Pasted!" briefly
+    this._pasteFeedback = 0;   // > 0 → show "✓ Pasted!"
+    this._pastePrompt   = 0;   // > 0 → show "Press ⌘V" (clipboard API blocked)
 
     // Hidden input used as a paste target — avoids clipboard-read permission
     this._hiddenInput = document.createElement('input');
@@ -105,6 +106,7 @@ export class OnlineWaitScene extends Scene {
 
   update(dt) {
     if (this._pasteFeedback > 0) this._pasteFeedback -= dt;
+    if (this._pastePrompt   > 0) this._pastePrompt   -= dt;
     const click = this._pendingClick;
     this._pendingClick = null;
     if (click) this._handleClick(click);
@@ -126,12 +128,19 @@ export class OnlineWaitScene extends Scene {
 
     if (this._phase === 'joining') {
       if (this._hit(this._pasteBtn(W, H), pt)) {
-        // Read directly from the clipboard — works from a user-gesture (click)
-        navigator.clipboard?.readText()
-          .then(t => this._applyPaste(t))
-          .catch(() => {
-            // Permission denied: hidden input is already focused so Ctrl+V still works
-          });
+        // Always focus hidden input first — ensures Cmd/Ctrl+V works immediately
+        this._hiddenInput?.focus();
+        // Try clipboard API (works in Chrome; Safari may block it)
+        if (navigator.clipboard?.readText) {
+          navigator.clipboard.readText()
+            .then(t => this._applyPaste(t))
+            .catch(() => {
+              // Clipboard API blocked (common in Safari) — show "Press ⌘V" prompt
+              this._pastePrompt = 2.5;
+            });
+        } else {
+          this._pastePrompt = 2.5;
+        }
       }
     }
   }
@@ -243,19 +252,36 @@ export class OnlineWaitScene extends Scene {
     }
 
     // ── Paste button ──────────────────────────────────────────────────────
-    const pb     = this._pasteBtn(W, H);
-    const pasted = this._pasteFeedback > 0;
-    const pbHov  = !pasted && this._hit(pb, this._mouse);
+    const pb      = this._pasteBtn(W, H);
+    const pasted  = this._pasteFeedback > 0;
+    const prompt  = !pasted && this._pastePrompt > 0;
+    const pbHov   = !pasted && !prompt && this._hit(pb, this._mouse);
 
-    ctx.fillStyle = pasted ? 'rgba(100,255,140,0.18)' : pbHov ? 'rgba(140,243,255,0.18)' : 'rgba(140,243,255,0.07)';
+    const bgColor = pasted  ? 'rgba(100,255,140,0.18)'
+                  : prompt  ? 'rgba(255,200,80,0.15)'
+                  : pbHov   ? 'rgba(140,243,255,0.18)'
+                  :            'rgba(140,243,255,0.07)';
+    const bdColor = pasted  ? 'rgba(100,255,140,0.55)'
+                  : prompt  ? 'rgba(255,200,80,0.55)'
+                  : pbHov   ? '#8cf3ff'
+                  :            'rgba(140,243,255,0.28)';
+    const txColor = pasted  ? 'rgba(100,255,160,0.9)'
+                  : prompt  ? '#ffc850'
+                  : pbHov   ? '#8cf3ff'
+                  :            'rgba(255,255,255,0.55)';
+    const label   = pasted  ? '✓ Pasted!'
+                  : prompt  ? 'Press ⌘V / Ctrl+V'
+                  :            'Paste code';
+
+    ctx.fillStyle = bgColor;
     ctx.beginPath(); ctx.roundRect(pb.x, pb.y, pb.w, pb.h, 8); ctx.fill();
-    ctx.strokeStyle = pasted ? 'rgba(100,255,140,0.55)' : pbHov ? '#8cf3ff' : 'rgba(140,243,255,0.28)';
+    ctx.strokeStyle = bdColor;
     ctx.lineWidth = pbHov ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(pb.x, pb.y, pb.w, pb.h, 8); ctx.stroke();
-    ctx.fillStyle = pasted ? 'rgba(100,255,160,0.9)' : pbHov ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
+    ctx.fillStyle = txColor;
     ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(pasted ? '✓ Pasted!' : '⌘/Ctrl+V  Paste code', pb.x + pb.w / 2, pb.y + pb.h / 2);
+    ctx.fillText(label, pb.x + pb.w / 2, pb.y + pb.h / 2);
 
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
