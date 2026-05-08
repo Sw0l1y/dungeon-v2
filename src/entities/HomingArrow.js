@@ -50,7 +50,8 @@ export class HomingArrow extends Projectile {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    this._trail.push({ x: this.x, y: this.y });
+    const spd = Math.hypot(this.vx, this.vy) || 1;
+    this._trail.push({ x: this.x, y: this.y, dx: this.vx / spd, dy: this.vy / spd });
     if (this._trail.length > 10) this._trail.shift();
 
     for (const e of [...this.level.entities]) {
@@ -117,9 +118,23 @@ export class HomingArrow extends Projectile {
   }
 
   draw(ctx) {
-    ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
-    super.draw(ctx);
-    ctx.restore();
+    const speed = Math.hypot(this.vx, this.vy) || 1;
+    const dx = this.vx / speed;
+    const dy = this.vy / speed;
+    const px = -dy;
+    const py =  dx;
+
+    // Trail — each point uses its own stored direction so curves render correctly
+    const n = this._trail.length;
+    for (let i = 0; i < n; i++) {
+      const pos   = this._trail[i];
+      const tdx   = pos.dx ?? dx;
+      const tdy   = pos.dy ?? dy;
+      const alpha = ((i + 1) / (n + 1)) * 0.35;
+      this._drawArrow(ctx, pos.x, pos.y, tdx, tdy, -tdy, tdx, alpha);
+    }
+
+    // Main arrow head
+    this._drawArrow(ctx, this.x, this.y, dx, dy, px, py, 1);
   }
 }

@@ -4,7 +4,7 @@ import { InputBinding } from './systems/InputBinding.js';
 import { BINDINGS } from './systems/bindings.js';
 import { TitleScene } from './scenes/TitleScene.js';
 
-export const VERSION = 'v0.10.4';
+export const VERSION = 'v0.10.5';
 
 export class Game {
   constructor(canvas) {
