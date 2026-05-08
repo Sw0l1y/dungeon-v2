@@ -36,14 +36,27 @@ export class GameScene extends Scene {
     this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
     // Send-rate timers
     this._sendTimer  = 0;
-    // Disconnect overlay
+    // Disconnect overlay (client only — host continues when a single client drops)
     this._netDisconnected = false;
     // Buffered fx events to include in next state packet (host only)
     this._pendingEvents = [];
 
+    // Multi-client input routing (host only):
+    //   Map<peerId, {offset, count}> — which remoteBindings slice each client owns
+    this._peerInputMap = this.game.state.peerInputMap ?? new Map();
+    // Multi-client: which player-array indices are locally controlled on this device.
+    // Host: [] (all host players use local bindings, no applyRemote needed).
+    // Client: e.g. [1] or [2,3] — used in _buildInputPacket and _applyHostState.
+    this._myPlayerIdxs      = this.game.state.myPlayerIdxs ?? [];
+    this._localPlayerIdxSet = new Set(this._myPlayerIdxs);
+
     if (this._net) {
-      this._net.onMessage      = (data) => this._onNetMsg(data);
-      this._net.onDisconnected = ()     => { this._netDisconnected = true; };
+      this._net.onMessage      = (data, peerId) => this._onNetMsg(data, peerId);
+      // Only the CLIENT shows the disconnect overlay — if a single client drops
+      // mid-game on the host side, the remaining players continue unaffected.
+      this._net.onDisconnected = () => {
+        if (this._netRole === 'client') this._netDisconnected = true;
+      };
     }
 
     // Intercept death particle spawns so the host can relay them to the client
@@ -478,28 +491,35 @@ export class GameScene extends Scene {
   }
 
   /** Build input packet (client → host, 30 hz).
-   *  Client's local players start at index hostPlayerCount. */
+   *  Only sends inputs for this device's locally-controlled players. */
   _buildInputPacket() {
     const snap = (pl) => {
       if (!pl) return { x: 0, y: 0, ak: 0, it: 0 };
       const { x, y } = pl.binding.axes;
       return { x, y, ak: pl.binding.isHeld('attack') ? 1 : 0, it: pl.binding.isHeld('interact') ? 1 : 0 };
     };
-    const hc = this._hostPlayerCount;
-    const cc = this._clientPlayerCount;
     const ps = this.level.players;
-    const inputs = [];
-    for (let i = 0; i < cc; i++) inputs.push(snap(ps[hc + i]));
-    return { t: 'in', p: inputs };
+    return { t: 'in', p: this._myPlayerIdxs.map(i => snap(ps[i])) };
   }
 
   /** Handle an incoming network message. */
-  _onNetMsg(data) {
+  _onNetMsg(data, peerId) {
     if (this._netRole === 'host') {
-      // Client sends { t:'in', p:[...inputs for each client-local player] }
+      // Client sends { t:'in', p:[...inputs for this client's local players] }
       if (data.t === 'in' && data.p) {
-        for (let i = 0; i < this._remoteBindings.length; i++) {
-          this._remoteBindings[i]?.applyRemote(data.p[i] ?? {});
+        // Route to the correct RemoteBinding slice via the peerInputMap.
+        // With a single client and no peerInputMap entry, fall back to the old
+        // behaviour (apply sequentially from offset 0) for backward compat.
+        const mapping = this._peerInputMap.get(peerId);
+        if (mapping) {
+          for (let i = 0; i < Math.min(data.p.length, mapping.count); i++) {
+            this._remoteBindings[mapping.offset + i]?.applyRemote(data.p[i] ?? {});
+          }
+        } else {
+          // Fallback: single-client path (peerInputMap not populated)
+          for (let i = 0; i < this._remoteBindings.length; i++) {
+            this._remoteBindings[i]?.applyRemote(data.p[i] ?? {});
+          }
         }
       }
     } else {
@@ -532,12 +552,14 @@ export class GameScene extends Scene {
         pl._facingX = pd.fx ?? pl._facingX;
         pl._facingY = pd.fy ?? pl._facingY;
 
-        // For host-local players: push their movement axes into the RemoteBinding so
-        // Player.update() smoothly extrapolates their position between state packets
-        // instead of freezing them (axes default to {0,0} on a fresh RemoteBinding).
-        // Use applyRemote() — axes is a getter-only property, direct assignment throws
-        // in strict-mode ES modules and would silently kill the rest of this handler.
-        if (i < this._hostPlayerCount && pd.ax !== undefined) {
+        // Push movement axes into the RemoteBinding for every player that is NOT
+        // locally controlled on this device.  This smoothly extrapolates positions
+        // between 20 hz state packets instead of freezing them.
+        // Locally-controlled players already move via their real InputBinding, so
+        // we skip them to avoid overriding live input.
+        // Use applyRemote() — axes is a getter-only property, direct assignment
+        // throws in strict-mode ES modules and silently kills this whole handler.
+        if (!this._localPlayerIdxSet.has(i) && pd.ax !== undefined) {
           pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
         }
 

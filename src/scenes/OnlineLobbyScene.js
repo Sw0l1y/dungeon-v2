@@ -18,11 +18,11 @@ const COLORS      = ['#8cf3ff', '#ff8c42', '#a8ff78', '#ff6b9d', '#c77dff', '#ff
 const COLOR_NAMES = ['Cyan',    'Orange',  'Green',   'Pink',    'Purple',  'Gold'   ];
 const MAX_NAME    = 12;
 const MAX_LOCAL   = 2;   // max local (non-remote) players per device
+const MAX_PLAYERS = 4;   // total player cap across all devices
 
 // ── Grid layout (virtual canvas 1120×630) ────────────────────────────────────
 //   [P1]  [P2]
 //   [P3]  [P4]
-//
 const CARD_W = 238;
 const CARD_H = 195;
 const GAP_X  = 20;
@@ -31,7 +31,7 @@ const GRID_X = (1120 - 2 * CARD_W - GAP_X) / 2;  // 312
 const GRID_Y = 105;
 
 function defaultSlot(idx) {
-  return { active: false, name: `Player ${idx + 1}`, colorIdx: idx % COLORS.length, isRemote: false };
+  return { active: false, name: `Player ${idx + 1}`, colorIdx: idx % COLORS.length, isRemote: false, peerId: null };
 }
 
 export class OnlineLobbyScene extends Scene {
@@ -44,125 +44,155 @@ export class OnlineLobbyScene extends Scene {
     this._code      = this.game.state.netCode ?? '';
     this._connected = false;
     this._error     = '';
-    this._copyFeedback = 0;
-    this._syncTimer    = 0;
-    this._editingSlot  = null;   // slot index 0-3 or null
+    this._errorTimer    = 0;
+    this._copyFeedback  = 0;
+    this._syncTimer     = 0;
+    this._editingSlot   = null;
+    this._mySlotIdxs    = [];    // client: which slot indices belong to this device
+
+    // Host: Set<peerId> of currently connected clients
+    this._connectedPeers = new Set();
+    // Host: per-peer disconnect-verify timers (fallback if onDisconnected misses)
+    this._disconnectVerifyTimers = new Map(); // peerId → countdown
 
     const isHost = this._role === 'host';
 
     // Host owns all slots from the start; client waits for the first lobbySync
     this._slots = isHost
       ? [
-          { active: true,  name: 'Player 1', colorIdx: 0, isRemote: false },
-          { active: false, name: 'Player 2', colorIdx: 1, isRemote: false },
-          { active: false, name: 'Player 3', colorIdx: 2, isRemote: false },
-          { active: false, name: 'Player 4', colorIdx: 3, isRemote: false },
+          { active: true,  name: 'Player 1', colorIdx: 0, isRemote: false, peerId: null },
+          { active: false, name: 'Player 2', colorIdx: 1, isRemote: false, peerId: null },
+          { active: false, name: 'Player 3', colorIdx: 2, isRemote: false, peerId: null },
+          { active: false, name: 'Player 4', colorIdx: 3, isRemote: false, peerId: null },
         ]
-      : null;   // populated on first lobbySync
+      : null;
 
-    this._kicked                = false;   // client was removed by host
-    this._disconnectVerifyTimer = 0;       // >0 while waiting to confirm a DC error is real
-    this._copyBtnRect           = null;
-    this._mouse                 = { x: 0, y: 0 };
-    this._pendingClick          = null;
+    this._kicked        = false;
+    this._copyBtnRect   = null;
+    this._mouse         = { x: 0, y: 0 };
+    this._pendingClick  = null;
 
     if (this._net) {
       this._net.onWaiting = () => {};
 
-      // DataChannel open
-      this._net.onConnected = () => {
+      // ── DataChannel opened (new client connected) ────────────────────────
+      this._net.onConnected = (peerId) => {
+        // Client side: peerId is undefined — just mark connected
+        if (!isHost) { this._connected = true; return; }
+
+        this._connectedPeers.add(peerId);
         this._connected = true;
-        if (isHost) {
-          // Auto-place the joining client in the first empty slot
-          const emptyIdx = this._slots.findIndex(s => !s.active);
-          if (emptyIdx !== -1) {
-            this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: this._nextFreeColor(emptyIdx), isRemote: true };
-          }
+        this._disconnectVerifyTimers.delete(peerId);
+
+        const totalActive = this._slots.filter(s => s.active).length;
+        const emptyIdx    = this._slots.findIndex(s => !s.active);
+
+        if (emptyIdx !== -1 && totalActive < MAX_PLAYERS) {
+          this._slots[emptyIdx] = {
+            active: true, name: `Player ${emptyIdx + 1}`,
+            colorIdx: this._nextFreeColor(emptyIdx),
+            isRemote: true, peerId,
+          };
           this._syncLobby();
+        } else {
+          // No room — politely kick the new joiner
+          this._net.sendTo(peerId, { t: 'kicked' });
         }
       };
 
-      this._net.onMessage = (data) => {
+      // ── Incoming messages ────────────────────────────────────────────────
+      this._net.onMessage = (data, peerId) => {
         if (isHost) {
-          // Client updating their slot's name/color — includes slot idx for 2-player support
+          // ── clientUpdate: name or color change from a client ──────────────
           if (data.t === 'clientUpdate') {
-            const ri = (typeof data.idx === 'number' && this._slots[data.idx]?.isRemote)
+            // Accept updates only for slots that belong to this peer
+            const ri = (typeof data.idx === 'number' && this._slots[data.idx]?.peerId === peerId)
               ? data.idx
-              : this._findRemoteIdx();
+              : -1;
             if (ri !== -1) {
-              if (typeof data.n === 'string') this._slots[ri].name = data.n;
-              // Only apply the color if it isn't already taken by another active slot
-              if (typeof data.c === 'number' && !this._colorTaken(ri, data.c)) {
-                this._slots[ri].colorIdx = data.c;
-              } else if (typeof data.c === 'number') {
-                // Reject: force a re-sync so client sees the correct state
-                this._syncLobby();
+              if (typeof data.n === 'string') this._slots[ri].name = data.n.slice(0, MAX_NAME);
+              if (typeof data.c === 'number') {
+                if (!this._colorTaken(ri, data.c)) {
+                  this._slots[ri].colorIdx = data.c;
+                } else {
+                  this._syncLobby(); // reject: re-sync so client sees correct state
+                  return;
+                }
               }
             }
+            this._syncLobby();
           }
-          // Client wants to add their 2nd local player as a remote slot
+
+          // ── clientAddPlayer: client wants a 2nd local slot ────────────────
           if (data.t === 'clientAddPlayer') {
-            const remoteCount = this._slots.filter(s => s.active && s.isRemote).length;
-            if (remoteCount < MAX_LOCAL) {
+            const totalActive = this._slots.filter(s => s.active).length;
+            const peerCount   = this._slots.filter(s => s.active && s.peerId === peerId).length;
+            if (totalActive < MAX_PLAYERS && peerCount < MAX_LOCAL) {
               const emptyIdx = this._slots.findIndex(s => !s.active);
               if (emptyIdx !== -1) {
-                this._slots[emptyIdx] = { active: true, name: `Player ${emptyIdx + 1}`, colorIdx: this._nextFreeColor(emptyIdx), isRemote: true };
+                this._slots[emptyIdx] = {
+                  active: true, name: `Player ${emptyIdx + 1}`,
+                  colorIdx: this._nextFreeColor(emptyIdx),
+                  isRemote: true, peerId,
+                };
                 this._syncLobby();
               }
             }
           }
-          // Client removing one of their remote slots
+
+          // ── clientRemoveSlot: client removes one of their own slots ────────
           if (data.t === 'clientRemoveSlot' && typeof data.idx === 'number') {
             const s = this._slots[data.idx];
-            if (s?.isRemote) {
+            if (s?.isRemote && s?.peerId === peerId) {
               this._slots[data.idx] = defaultSlot(data.idx);
               this._syncLobby();
             }
           }
+
         } else {
-          // Full state snapshot from host
+          // ── Full state snapshot from host ─────────────────────────────────
           if (data.t === 'lobbySync' && Array.isArray(data.s)) {
             this._slots = data.s.map((sd, i) => sd
-              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r }
+              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r, peerId: null }
               : defaultSlot(i)
             );
+            if (Array.isArray(data.mine)) this._mySlotIdxs = data.mine;
           }
-          // Host launched — apply final state and go
+
+          // ── Host launched — apply final state and go ──────────────────────
           if (data.t === 'lobbyStart' && Array.isArray(data.s)) {
             this._slots = data.s.map((sd, i) => sd
-              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r }
+              ? { active: !!sd.a, name: sd.n ?? `Player ${i + 1}`, colorIdx: sd.c ?? i % COLORS.length, isRemote: !!sd.r, peerId: null }
               : defaultSlot(i)
             );
+            if (Array.isArray(data.mine)) this._mySlotIdxs = data.mine;
             this._doLaunch();
           }
-          // Host kicked this client
-          if (data.t === 'kicked') {
-            this._kicked = true;
-          }
+
+          // ── Host kicked this device ────────────────────────────────────────
+          if (data.t === 'kicked') this._kicked = true;
         }
       };
 
-      this._net.onDisconnected = () => {
-        this._disconnectVerifyTimer = 0;   // cancel any pending verification
-        this._connected = false;
-        this._error = isHost ? 'Client disconnected' : 'Host disconnected';
-        if (isHost && this._slots) {
-          // Clear ALL remote slots so they can be re-used
-          for (let i = 0; i < this._slots.length; i++) {
-            if (this._slots[i].isRemote) this._slots[i] = defaultSlot(i);
-          }
-        }
-      };
-
-      this._net.onError = (m) => {
-        if (isHost && (m === 'DataChannel error' || !m)) {
-          // Start a short verification window. The DataChannel will close
-          // momentarily (triggering onDisconnected), which cancels the timer.
-          // The timer is a fallback in case the close event never fires.
-          this._error = 'Client connection lost…';
-          this._disconnectVerifyTimer = 4;
+      // ── Peer disconnected ────────────────────────────────────────────────
+      this._net.onDisconnected = (peerId) => {
+        if (isHost) {
+          this._disconnectVerifyTimers.delete(peerId);
+          this._handlePeerDisconnect(peerId);
         } else {
-          this._error = m || 'Connection error';
+          this._connected = false;
+          this._setError('Host disconnected');
+        }
+      };
+
+      // ── DataChannel error ────────────────────────────────────────────────
+      this._net.onError = (m, peerId) => {
+        if (isHost && peerId) {
+          // Start a verify window; onDisconnected cancels it if the DC closes normally
+          this._setError('Client connection lost…');
+          this._disconnectVerifyTimers.set(peerId, 4);
+        } else if (!isHost) {
+          this._setError(m || 'Connection error');
         }
       };
     }
@@ -178,12 +208,12 @@ export class OnlineLobbyScene extends Scene {
         x: (e.clientX - r.left) * (this.game.canvas.width  / r.width),
         y: (e.clientY - r.top)  * (this.game.canvas.height / r.height),
       };
-      // Copy must happen synchronously inside the event handler so Safari's
-      // user-gesture context is still active (it expires after one async tick).
+      // Copy must be synchronous inside the event handler so Safari's
+      // user-gesture context is still active (expires after one async tick).
       if (this._role === 'host' && this._code && this._copyBtnRect && this._hit(this._copyBtnRect, pt)) {
         _copyToClipboard(this._code);
         this._copyFeedback = 1.5;
-        return;   // skip pendingClick — no further action needed
+        return;
       }
       this._pendingClick = pt;
     };
@@ -198,19 +228,21 @@ export class OnlineLobbyScene extends Scene {
     // Don't close net — ClassScene / GameScene still need it
   }
 
-  _findRemoteIdx() {
-    return this._slots?.findIndex(s => s.isRemote) ?? -1;
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  _setError(msg) {
+    this._error      = msg;
+    this._errorTimer = msg ? 4 : 0;
   }
 
-  // Returns true if any OTHER active slot already uses this color
+  // Returns true if any OTHER active slot already uses this colorIdx
   _colorTaken(slotIdx, colorIdx) {
     return (this._slots ?? []).some(
       (s, i) => i !== slotIdx && s.active && s.colorIdx === colorIdx,
     );
   }
 
-  // Returns the first color index not already used by any active slot,
-  // treating slotIdx as the slot being filled (excluded from the taken check).
+  // Returns the first color index not in use by any other active slot
   _nextFreeColor(slotIdx) {
     const taken = new Set(
       (this._slots ?? [])
@@ -220,20 +252,44 @@ export class OnlineLobbyScene extends Scene {
     for (let c = 0; c < COLORS.length; c++) {
       if (!taken.has(c)) return c;
     }
-    return 0; // fallback — all 6 colours claimed (only possible with future content)
+    return 0;
   }
 
-  // ── Sync ───────────────────────────────────────────────────────────────────
+  // Handle a peer going away (host side)
+  _handlePeerDisconnect(peerId) {
+    this._connectedPeers.delete(peerId);
+    this._connected = this._connectedPeers.size > 0;
+    if (this._slots) {
+      for (let i = 0; i < this._slots.length; i++) {
+        if (this._slots[i].peerId === peerId) this._slots[i] = defaultSlot(i);
+      }
+    }
+    if (this._connected) {
+      this._setError('A client disconnected');
+      this._syncLobby();
+    } else {
+      this._setError('Client disconnected');
+    }
+  }
 
+  // ── Sync ──────────────────────────────────────────────────────────────────
+
+  // Send a personalised lobby state to each connected client.
+  // The 'mine' field tells the client which slot indices belong to their device.
   _syncLobby() {
     if (!this._net || !this._connected || this._role !== 'host') return;
-    this._net.send({
-      t: 'lobbySync',
-      s: this._slots.map(s => ({ a: s.active ? 1 : 0, n: s.name, c: s.colorIdx, r: s.isRemote ? 1 : 0 })),
-    });
+    const payload = this._slots.map(s => ({
+      a: s.active ? 1 : 0, n: s.name, c: s.colorIdx, r: s.isRemote ? 1 : 0,
+    }));
+    for (const peerId of this._net.connectedPeerIds()) {
+      const mine = this._slots
+        .map((s, i) => (s.peerId === peerId ? i : -1))
+        .filter(i => i !== -1);
+      this._net.sendTo(peerId, { t: 'lobbySync', s: payload, mine });
+    }
   }
 
-  // ── Layout ─────────────────────────────────────────────────────────────────
+  // ── Layout ────────────────────────────────────────────────────────────────
 
   _cardRect(idx) {
     return {
@@ -285,27 +341,27 @@ export class OnlineLobbyScene extends Scene {
     return { x: W / 2 - 55, y: H - 46, w: 110, h: 30 };
   }
 
-  // ── Update ─────────────────────────────────────────────────────────────────
+  // ── Update ────────────────────────────────────────────────────────────────
 
   update(dt) {
     if (this._copyFeedback > 0) this._copyFeedback -= dt;
+    if (this._errorTimer   > 0) {
+      this._errorTimer -= dt;
+      if (this._errorTimer <= 0) { this._errorTimer = 0; this._error = ''; }
+    }
 
-    // Disconnect verification timer — fires if onDisconnected hasn't cancelled it
-    if (this._disconnectVerifyTimer > 0) {
-      this._disconnectVerifyTimer -= dt;
-      if (this._disconnectVerifyTimer <= 0) {
-        this._disconnectVerifyTimer = 0;
-        this._connected = false;
-        this._error = 'Client disconnected';
-        if (this._slots) {
-          for (let i = 0; i < this._slots.length; i++) {
-            if (this._slots[i].isRemote) this._slots[i] = defaultSlot(i);
-          }
-        }
+    // Tick per-peer disconnect-verify timers
+    for (const [peerId, t] of this._disconnectVerifyTimers) {
+      const remaining = t - dt;
+      if (remaining <= 0) {
+        this._disconnectVerifyTimers.delete(peerId);
+        this._handlePeerDisconnect(peerId);
+      } else {
+        this._disconnectVerifyTimers.set(peerId, remaining);
       }
     }
 
-    // Host periodically pushes full state to client
+    // Host: periodically push full state to all clients
     if (this._role === 'host') {
       this._syncTimer += dt;
       if (this._syncTimer >= 0.5) { this._syncTimer = 0; this._syncLobby(); }
@@ -360,12 +416,9 @@ export class OnlineLobbyScene extends Scene {
     if (this._hit(this._backBtn(), pt)) { this._goBack(); return; }
     if (this._kicked) return;
 
-    // Copy code button
-    // Copy is handled synchronously in _onMouseDown — nothing to do here.
-
     const isHost = this._role === 'host';
 
-    // START (host only — any active slot is enough)
+    // START (host only)
     if (isHost && this._slots?.some(s => s.active) && this._hit(this._startBtn(), pt)) {
       this._hostStart(); return;
     }
@@ -373,10 +426,11 @@ export class OnlineLobbyScene extends Scene {
     const slots = this._slots;
     if (!slots) return;
 
-    // Client: "+ Add 2nd Player" on the first empty slot
+    // ── Client "+ Add 2nd Player" ─────────────────────────────────────────
     if (!isHost) {
-      const remoteCount = slots.filter(s => s.active && s.isRemote).length;
-      if (remoteCount < MAX_LOCAL) {
+      const myCount    = this._mySlotIdxs.filter(i => slots[i]?.active).length;
+      const totalCount = slots.filter(s => s.active).length;
+      if (myCount < MAX_LOCAL && totalCount < MAX_PLAYERS) {
         const firstEmpty = slots.findIndex(s => !s.active);
         if (firstEmpty !== -1) {
           const card = this._cardRect(firstEmpty);
@@ -389,42 +443,43 @@ export class OnlineLobbyScene extends Scene {
     }
 
     for (let idx = 0; idx < 4; idx++) {
-      const slot = slots[idx];
-      const card = this._cardRect(idx);
+      const slot    = slots[idx];
+      const card    = this._cardRect(idx);
+      const canEdit = isHost ? !slot.isRemote : this._mySlotIdxs.includes(idx);
 
       if (slot.active) {
-        // ── Host remove ─────────────────────────────────────────────────────
+        // ── Host remove ────────────────────────────────────────────────────
         if (isHost && this._hit(this._removeBtn(card), pt)) {
-          // If removing the last remote slot, notify the client they're kicked
-          if (slot.isRemote) {
-            const remoteCount = slots.filter(s => s.active && s.isRemote).length;
-            if (remoteCount === 1) this._net?.send({ t: 'kicked' });
+          if (slot.isRemote && slot.peerId) {
+            const peerSlots = slots.filter(s => s.active && s.isRemote && s.peerId === slot.peerId);
+            if (peerSlots.length <= 1) {
+              this._net?.sendTo(slot.peerId, { t: 'kicked' });
+            }
           }
           slot.active   = false;
           slot.isRemote = false;
+          slot.peerId   = null;
           if (this._editingSlot === idx) this._editingSlot = null;
           this._syncLobby();
           return;
         }
 
-        // ── Client remove own secondary remote slot ──────────────────────────
-        if (!isHost && slot.isRemote) {
-          const remoteCount = slots.filter(s => s.active && s.isRemote).length;
-          if (remoteCount > 1 && this._hit(this._removeBtn(card), pt)) {
+        // ── Client remove their own 2nd slot ──────────────────────────────
+        if (!isHost && canEdit) {
+          const myActiveCount = this._mySlotIdxs.filter(i => slots[i]?.active).length;
+          if (myActiveCount > 1 && this._hit(this._removeBtn(card), pt)) {
             this._net?.send({ t: 'clientRemoveSlot', idx });
             return;
           }
         }
 
-        // ── Edit: host→local slots; client→their remote slots ───────────────
-        const canEdit = isHost ? !slot.isRemote : slot.isRemote;
+        // ── Edit name / color ──────────────────────────────────────────────
         if (!canEdit) continue;
 
         if (this._hit(this._nameField(card), pt)) { this._editingSlot = idx; return; }
 
         for (let ci = 0; ci < COLORS.length; ci++) {
           if (this._hit(this._colorSwatch(card, ci), pt)) {
-            // Prevent picking a color another active player already has
             if (!this._colorTaken(idx, ci)) {
               slot.colorIdx = ci;
               if (isHost) this._syncLobby();
@@ -435,12 +490,14 @@ export class OnlineLobbyScene extends Scene {
         }
 
       } else {
-        // ── Host add player (max 2 local) ─────────────────────────────────
+        // ── Host add local player ──────────────────────────────────────────
         if (isHost && this._hit(this._addBtn(card), pt)) {
-          const localCount = slots.filter(s => s.active && !s.isRemote).length;
-          if (localCount < MAX_LOCAL) {
+          const localCount  = slots.filter(s => s.active && !s.isRemote).length;
+          const totalActive = slots.filter(s => s.active).length;
+          if (localCount < MAX_LOCAL && totalActive < MAX_PLAYERS) {
             slot.active    = true;
             slot.isRemote  = false;
+            slot.peerId    = null;
             slot.name      = `Player ${idx + 1}`;
             slot.colorIdx  = this._nextFreeColor(idx);
             this._syncLobby();
@@ -453,7 +510,7 @@ export class OnlineLobbyScene extends Scene {
     this._editingSlot = null;
   }
 
-  // ── Navigation ─────────────────────────────────────────────────────────────
+  // ── Navigation ────────────────────────────────────────────────────────────
 
   _goBack() {
     this._net?.close();
@@ -463,52 +520,104 @@ export class OnlineLobbyScene extends Scene {
     this.game.scenes.switch(new OnlineWaitScene(this.game));
   }
 
-  // ── Launch ─────────────────────────────────────────────────────────────────
+  // ── Launch ────────────────────────────────────────────────────────────────
 
   _hostStart() {
     if (!this._slots?.some(s => s.active)) return;
     const payload = this._slots.map(s => ({
       a: s.active ? 1 : 0, n: s.name, c: s.colorIdx, r: s.isRemote ? 1 : 0,
     }));
-    this._net?.send({ t: 'lobbyStart', s: payload });
+    // Send each client a personalised start message with their slot indices
+    for (const peerId of this._net?.connectedPeerIds() ?? []) {
+      const mine = this._slots
+        .map((s, i) => (s.peerId === peerId ? i : -1))
+        .filter(i => i !== -1);
+      this._net.sendTo(peerId, { t: 'lobbyStart', s: payload, mine });
+    }
     this._doLaunch();
   }
 
   _doLaunch() {
-    const isHost = this._role === 'host';
-    const slots  = this._slots ?? [];
+    const isHost     = this._role === 'host';
+    const slots      = this._slots ?? [];
+    const mySlotIdxs = isHost ? [] : (this._mySlotIdxs ?? []);
+    const mySlotSet  = new Set(mySlotIdxs);
 
-    // Host-local: active and not remote
-    const hostSlots   = slots.filter(s => s?.active && !s.isRemote);
-    // Client-local: active and remote (from host's perspective)
-    const clientSlots = slots.filter(s => s?.active &&  s.isRemote);
+    // Collect slots with their original indices so order is preserved
+    const hostSlotPairs   = slots.map((s, i) => [s, i]).filter(([s]) => s?.active && !s.isRemote);
+    const remoteSlotPairs = slots.map((s, i) => [s, i]).filter(([s]) => s?.active &&  s.isRemote);
 
-    const localBindings  = [this.game.bindings.player1, this.game.bindings.player2];
-    const remoteCount    = isHost ? clientSlots.length : hostSlots.length;
-    const remoteBindings = Array.from({ length: remoteCount }, () => new RemoteBinding());
+    const localBindings = [this.game.bindings.player1, this.game.bindings.player2];
 
     let players;
+    let remoteBindings;
+    let peerInputMap  = undefined;
+    let myPlayerIdxs  = undefined;
+
     if (isHost) {
+      // Every remote slot gets a RemoteBinding so the host can apply client input
+      remoteBindings = remoteSlotPairs.map(() => new RemoteBinding());
+
+      // Map peerId → {offset, count} so GameScene can route input packets
+      peerInputMap = new Map();
+      let rbOffset = 0;
+      for (const [s] of remoteSlotPairs) {
+        const pid = s.peerId;
+        if (pid && !peerInputMap.has(pid)) peerInputMap.set(pid, { offset: rbOffset, count: 0 });
+        if (pid) peerInputMap.get(pid).count++;
+        rbOffset++;
+      }
+
       players = [
-        ...hostSlots.map((s, i)   => ({ name: s.name, color: COLORS[s.colorIdx], binding: localBindings[i] })),
-        ...clientSlots.map((s, i) => ({ name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[i], remote: true, classId: 'sword' })),
+        ...hostSlotPairs.map(([s], i) => ({
+          name: s.name, color: COLORS[s.colorIdx], binding: localBindings[i],
+        })),
+        ...remoteSlotPairs.map(([s], i) => ({
+          name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[i],
+          remote: true, peerId: s.peerId,
+        })),
       ];
+
     } else {
+      // Client: my slots get local bindings; everything else gets a RemoteBinding.
+      // Player array must be in the SAME ORDER as on the host (host slots first,
+      // then remote slots in slot-index order).
+      const nonLocalCount = hostSlotPairs.length +
+        remoteSlotPairs.filter(([, i]) => !mySlotSet.has(i)).length;
+      remoteBindings = Array.from({ length: nonLocalCount }, () => new RemoteBinding());
+
+      let rbIdx    = 0;
+      let localIdx = 0;
+
       players = [
-        ...hostSlots.map((s, i)   => ({ name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[i], remote: true, classId: 'sword' })),
-        ...clientSlots.map((s, i) => ({ name: s.name, color: COLORS[s.colorIdx], binding: localBindings[i] })),
+        ...hostSlotPairs.map(([s]) => ({
+          name: s.name, color: COLORS[s.colorIdx], binding: remoteBindings[rbIdx++], remote: true,
+        })),
+        ...remoteSlotPairs.map(([s, slotIdx]) => {
+          const isLocal = mySlotSet.has(slotIdx);
+          return {
+            name: s.name, color: COLORS[s.colorIdx],
+            binding: isLocal ? localBindings[localIdx++] : remoteBindings[rbIdx++],
+            remote: !isLocal,
+          };
+        }),
       ];
+
+      // Which player-array indices are locally controlled (used for input packets)
+      myPlayerIdxs = players.map((p, i) => (!p.remote ? i : -1)).filter(i => i !== -1);
     }
 
-    this.game.state.players           = players;
-    this.game.state.remoteBindings    = remoteBindings;
-    this.game.state.hostPlayerCount   = hostSlots.length;
-    this.game.state.clientPlayerCount = clientSlots.length;
+    this.game.state.players            = players;
+    this.game.state.remoteBindings     = remoteBindings;
+    this.game.state.hostPlayerCount    = hostSlotPairs.length;
+    this.game.state.clientPlayerCount  = remoteSlotPairs.length;
+    if (peerInputMap !== undefined) this.game.state.peerInputMap  = peerInputMap;
+    if (myPlayerIdxs !== undefined) this.game.state.myPlayerIdxs = myPlayerIdxs;
 
     this.game.scenes.switch(new ClassScene(this.game));
   }
 
-  // ── Draw ───────────────────────────────────────────────────────────────────
+  // ── Draw ─────────────────────────────────────────────────────────────────
 
   draw(ctx) {
     const W = this.game.canvas.width;
@@ -518,7 +627,7 @@ export class OnlineLobbyScene extends Scene {
 
     const isHost = this._role === 'host';
 
-    // ── Header ────────────────────────────────────────────────────────────────
+    // ── Header ────────────────────────────────────────────────────────────
     ctx.fillStyle = '#8cf3ff';
     ctx.font = 'bold 28px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -533,14 +642,14 @@ export class OnlineLobbyScene extends Scene {
       ctx.fillText(this._error, W / 2, 95);
     }
 
-    // ── Client kicked ─────────────────────────────────────────────────────
+    // ── Client kicked overlay ─────────────────────────────────────────────
     if (!isHost && this._kicked) {
       this._drawKickedOverlay(ctx, W, H);
       this._drawBackBtn(ctx);
       return;
     }
 
-    // ── Client awaiting first sync ─────────────────────────────────────────
+    // ── Client awaiting first sync ────────────────────────────────────────
     if (!isHost && !this._slots) {
       this._drawCenteredSpinner(ctx, W, H, t);
       this._drawBackBtn(ctx);
@@ -550,11 +659,11 @@ export class OnlineLobbyScene extends Scene {
     // ── Grid ──────────────────────────────────────────────────────────────
     for (let idx = 0; idx < 4; idx++) this._drawCard(ctx, idx, t);
 
-    // ── Start / waiting ───────────────────────────────────────────────────
-    const sb = this._startBtn();
+    // ── Start / waiting hint ──────────────────────────────────────────────
     if (isHost) {
       this._drawStartBtn(ctx, W, t);
     } else {
+      const sb = this._startBtn();
       ctx.fillStyle = 'rgba(140,243,255,0.5)';
       ctx.font = 'bold 13px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -575,7 +684,7 @@ export class OnlineLobbyScene extends Scene {
     ctx.fillText(hint, W / 2, H - 8);
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Draw helpers ─────────────────────────────────────────────────────────
 
   _drawCodeRow(ctx, W, _t) {
     if (!this._code) return;
@@ -617,37 +726,25 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _drawKickedOverlay(ctx, W, H) {
-    const cx = W / 2;
-    const cy = H / 2 - 30;
-
-    // Semi-transparent panel
+    const cx = W / 2, cy = H / 2 - 30;
     ctx.fillStyle = 'rgba(10,14,28,0.85)';
     ctx.beginPath(); ctx.roundRect(cx - 220, cy - 56, 440, 112, 16); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,80,80,0.4)';
-    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = 'rgba(255,80,80,0.4)'; ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.roundRect(cx - 220, cy - 56, 440, 112, 16); ctx.stroke();
-
     ctx.fillStyle = '#ff7070';
     ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('You were removed from the lobby', cx, cy - 16);
-
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.fillText('Press ESC or click Back to return', cx, cy + 18);
   }
 
   _drawCenteredSpinner(ctx, W, H, _t) {
-    const cx   = W / 2;
-    const cy   = H / 2 - 20;
+    const cx   = W / 2, cy = H / 2 - 20;
     const spin = ((Date.now() / 1000) * Math.PI * 2) % (Math.PI * 2);
-
-    ctx.strokeStyle = 'rgba(140,243,255,0.5)';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 18, spin, spin + Math.PI * 1.4);
-    ctx.stroke();
-
+    ctx.strokeStyle = 'rgba(140,243,255,0.5)'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(cx, cy, 18, spin, spin + Math.PI * 1.4); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.4)';
     ctx.font = '14px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -672,7 +769,6 @@ export class OnlineLobbyScene extends Scene {
     const hasPlayers = this._slots?.some(s => s.active) ?? false;
     const btn  = this._startBtn();
     const hov  = hasPlayers && this._hit(btn, this._mouse);
-
     ctx.fillStyle = hasPlayers
       ? (hov ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)')
       : 'rgba(255,255,255,0.04)';
@@ -686,7 +782,6 @@ export class OnlineLobbyScene extends Scene {
     ctx.font = 'bold 17px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('START GAME', btn.x + btn.w / 2, btn.y + btn.h / 2);
-
     if (hasPlayers) {
       ctx.fillStyle = 'rgba(255,255,255,0.2)';
       ctx.font = '12px "Trebuchet MS", sans-serif';
@@ -694,7 +789,7 @@ export class OnlineLobbyScene extends Scene {
     }
   }
 
-  // ── Card drawing ───────────────────────────────────────────────────────────
+  // ── Card drawing ──────────────────────────────────────────────────────────
 
   _drawCard(ctx, idx, t) {
     const slot   = this._slots?.[idx];
@@ -705,10 +800,11 @@ export class OnlineLobbyScene extends Scene {
       if (isHost) {
         this._drawAddCard(ctx, card, idx);
       } else {
-        // Client: show "+ Add 2nd Player" on the first empty slot when < 2 remotes
-        const remoteCount = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
-        const firstEmpty  = (this._slots ?? []).findIndex(s => !s.active);
-        if (remoteCount < MAX_LOCAL && idx === firstEmpty) {
+        // Client: show "+ Add 2nd Player" on the first empty slot when allowed
+        const myCount    = this._mySlotIdxs.filter(i => (this._slots ?? [])[i]?.active).length;
+        const totalCount = (this._slots ?? []).filter(s => s.active).length;
+        const firstEmpty = (this._slots ?? []).findIndex(s => !s.active);
+        if (myCount < MAX_LOCAL && totalCount < MAX_PLAYERS && idx === firstEmpty) {
           this._drawClientAddCard(ctx, card, idx);
         } else {
           this._drawEmptyCard(ctx, card, idx);
@@ -717,8 +813,7 @@ export class OnlineLobbyScene extends Scene {
       return;
     }
 
-    // canEdit: host edits local (non-remote) slots; client edits their remote slots
-    const canEdit = isHost ? !slot.isRemote : slot.isRemote;
+    const canEdit = isHost ? !slot.isRemote : this._mySlotIdxs.includes(idx);
     this._drawActiveCard(ctx, card, idx, slot, canEdit);
   }
 
@@ -726,19 +821,14 @@ export class OnlineLobbyScene extends Scene {
     const { x, y, w, h } = card;
     ctx.fillStyle = 'rgba(255,255,255,0.02)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
-
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
-
     ctx.fillStyle = 'rgba(255,255,255,0.18)';
     ctx.font = '12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -747,72 +837,52 @@ export class OnlineLobbyScene extends Scene {
 
   _drawAddCard(ctx, card, idx) {
     const { x, y, w, h } = card;
-    const localCount = this._slots.filter(s => s.active && !s.isRemote).length;
-    const atLimit    = localCount >= MAX_LOCAL;
+    const localCount  = this._slots.filter(s => s.active && !s.isRemote).length;
+    const totalActive = this._slots.filter(s => s.active).length;
+    const atLimit = localCount >= MAX_LOCAL || totalActive >= MAX_PLAYERS;
 
-    // When host is already at 2 local players, remaining slots look just like empty cards
-    if (atLimit) {
-      this._drawEmptyCard(ctx, card, idx);
-      return;
-    }
+    if (atLimit) { this._drawEmptyCard(ctx, card, idx); return; }
 
     const btn = this._addBtn(card);
     const hov = this._hit(btn, this._mouse);
-
     ctx.fillStyle = 'rgba(140,243,255,0.03)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
-
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
-
     ctx.fillStyle = hov ? 'rgba(140,243,255,0.14)' : 'rgba(140,243,255,0.06)';
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.fill();
-    ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.2)';
-    ctx.lineWidth = hov ? 1.5 : 1;
+    ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.2)'; ctx.lineWidth = hov ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.stroke();
-
     ctx.fillStyle = hov ? '#8cf3ff' : 'rgba(255,255,255,0.5)';
     ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText('+ Add Player', x + w / 2, btn.y + btn.h / 2);
   }
 
-  // Client's "add my 2nd player" card — only shown on the first empty slot
   _drawClientAddCard(ctx, card, idx) {
     const { x, y, w, h } = card;
     const btn = this._addBtn(card);
     const hov = this._hit(btn, this._mouse);
-
     ctx.fillStyle = 'rgba(140,243,255,0.03)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
-    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = hov ? 'rgba(140,243,255,0.25)' : 'rgba(140,243,255,0.1)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
-
     ctx.fillStyle = 'rgba(255,255,255,0.35)';
     ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
-
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
-
     ctx.fillStyle = hov ? 'rgba(140,243,255,0.14)' : 'rgba(140,243,255,0.06)';
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.fill();
-    ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.2)';
-    ctx.lineWidth = hov ? 1.5 : 1;
+    ctx.strokeStyle = hov ? '#8cf3ff' : 'rgba(140,243,255,0.2)'; ctx.lineWidth = hov ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(btn.x, btn.y, btn.w, btn.h, 8); ctx.stroke();
-
     ctx.fillStyle = hov ? '#8cf3ff' : 'rgba(255,255,255,0.5)';
     ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -827,31 +897,34 @@ export class OnlineLobbyScene extends Scene {
     const isHost = this._role === 'host';
     const color  = COLORS[slot.colorIdx];
 
-    // Background
     ctx.fillStyle = canEdit ? 'rgba(140,243,255,0.07)' : 'rgba(140,243,255,0.04)';
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.fill();
     ctx.strokeStyle = canEdit ? (color + 'aa') : 'rgba(140,243,255,0.18)';
     ctx.lineWidth = canEdit ? 1.5 : 1;
     ctx.beginPath(); ctx.roundRect(x, y, w, h, 12); ctx.stroke();
 
-    // P# label (left)
     ctx.fillStyle = color;
     ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.fillText(this._playerLabel(idx), x + 14, y + 20);
 
-    // Right badge — shift left to clear × button when it's visible
-    const remoteCountForBadge = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
-    const hasRemoveBtn = isHost || (!isHost && slot.isRemote && remoteCountForBadge > 1);
-    const badgeRight   = x + w - (hasRemoveBtn ? 40 : 12);
-    if (slot.isRemote) {
+    // Right badge — shift left when remove button is visible
+    const myActiveCount = this._mySlotIdxs.filter(i => (this._slots ?? [])[i]?.active).length;
+    const showRemoveBtn = isHost || (!isHost && canEdit && myActiveCount > 1);
+    const badgeRight    = x + w - (showRemoveBtn ? 40 : 12);
+
+    if (slot.isRemote && !canEdit) {
+      // Other device's remote slot — show "online" badge
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
       ctx.fillText('online', badgeRight, y + 20);
-    } else {
-      const localSlots = (this._slots ?? []).filter(s => s.active && !s.isRemote);
-      const li = localSlots.indexOf(slot);
+    } else if (canEdit) {
+      // This device's slot (local host player or client's own remote slot)
+      const myActiveIdxs = isHost
+        ? (this._slots ?? []).map((s, i) => (!s.isRemote && s.active ? i : -1)).filter(i => i !== -1)
+        : this._mySlotIdxs.filter(i => (this._slots ?? [])[i]?.active);
+      const li = myActiveIdxs.indexOf(idx);
       const hint = li === 0 ? 'WASD+Q/E' : li === 1 ? 'IJKL+U/P' : '';
       if (hint) {
         ctx.fillStyle = 'rgba(255,255,255,0.2)';
@@ -861,16 +934,13 @@ export class OnlineLobbyScene extends Scene {
       }
     }
 
-    // ── Remove button (host always; client on their 2nd remote slot) ──────
-    const remoteCount   = (this._slots ?? []).filter(s => s.active && s.isRemote).length;
-    const showRemoveBtn = isHost || (!isHost && slot.isRemote && remoteCount > 1);
+    // Remove button
     if (showRemoveBtn) {
       const rb  = this._removeBtn(card);
       const hov = this._hit(rb, this._mouse);
       ctx.fillStyle = hov ? 'rgba(255,80,80,0.28)' : 'rgba(255,255,255,0.06)';
       ctx.beginPath(); ctx.roundRect(rb.x, rb.y, rb.w, rb.h, 4); ctx.fill();
-      ctx.strokeStyle = hov ? 'rgba(255,100,100,0.7)' : 'rgba(255,255,255,0.15)';
-      ctx.lineWidth = 1;
+      ctx.strokeStyle = hov ? 'rgba(255,100,100,0.7)' : 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.roundRect(rb.x, rb.y, rb.w, rb.h, 4); ctx.stroke();
       ctx.fillStyle = hov ? '#ff6060' : 'rgba(255,255,255,0.4)';
       ctx.font = 'bold 14px "Trebuchet MS", sans-serif';
@@ -879,22 +949,19 @@ export class OnlineLobbyScene extends Scene {
     }
 
     // Divider
-    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
-    ctx.lineWidth = 1;
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(x + 12, y + 34); ctx.lineTo(x + w - 12, y + 34); ctx.stroke();
 
     if (canEdit) {
-      // ── Editable name field ─────────────────────────────────────────────
+      // Editable name field
       const nf      = this._nameField(card);
       const editing = this._editingSlot === idx;
       const nfHov   = !editing && this._hit(nf, this._mouse);
-
       ctx.fillStyle = editing ? 'rgba(140,243,255,0.12)' : nfHov ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.04)';
       ctx.beginPath(); ctx.roundRect(nf.x, nf.y, nf.w, nf.h, 5); ctx.fill();
       ctx.strokeStyle = editing ? '#8cf3ff' : nfHov ? 'rgba(140,243,255,0.35)' : 'rgba(255,255,255,0.08)';
       ctx.lineWidth = editing ? 1.5 : 1;
       ctx.beginPath(); ctx.roundRect(nf.x, nf.y, nf.w, nf.h, 5); ctx.stroke();
-
       const cursor = editing && Math.floor(Date.now() / 500) % 2 === 0 ? '│' : '';
       ctx.fillStyle = '#fff';
       ctx.font = '13px "Trebuchet MS", sans-serif';
@@ -906,18 +973,15 @@ export class OnlineLobbyScene extends Scene {
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
       ctx.fillText('COLOR', x + 14, y + 100);
-
       for (let ci = 0; ci < COLORS.length; ci++) {
-        const s      = this._colorSwatch(card, ci);
-        const sel    = slot.colorIdx === ci;
-        const taken  = !sel && this._colorTaken(idx, ci);
-        const sv     = !sel && !taken && this._hit(s, this._mouse);
-
+        const s     = this._colorSwatch(card, ci);
+        const sel   = slot.colorIdx === ci;
+        const taken = !sel && this._colorTaken(idx, ci);
+        const sv    = !sel && !taken && this._hit(s, this._mouse);
         ctx.globalAlpha = taken ? 0.18 : sel ? 1 : 0.6;
         ctx.fillStyle = COLORS[ci];
         ctx.beginPath(); ctx.roundRect(s.x, s.y, s.w, s.h, 5); ctx.fill();
         ctx.globalAlpha = 1;
-
         if (sel) {
           ctx.strokeStyle = color; ctx.lineWidth = 2;
           ctx.beginPath(); ctx.roundRect(s.x - 3, s.y - 3, s.w + 6, s.h + 6, 8); ctx.stroke();
@@ -925,21 +989,18 @@ export class OnlineLobbyScene extends Scene {
           ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5;
           ctx.beginPath(); ctx.roundRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4, 7); ctx.stroke();
         } else if (taken) {
-          // Draw a small × to signal it's taken
           ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
           const cx2 = s.x + s.w / 2, cy2 = s.y + s.h / 2, r = 5;
           ctx.beginPath(); ctx.moveTo(cx2 - r, cy2 - r); ctx.lineTo(cx2 + r, cy2 + r); ctx.stroke();
           ctx.beginPath(); ctx.moveTo(cx2 + r, cy2 - r); ctx.lineTo(cx2 - r, cy2 + r); ctx.stroke();
         }
       }
-
       ctx.fillStyle = 'rgba(255,255,255,0.32)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(COLOR_NAMES[slot.colorIdx], x + w / 2, y + 182);
-
     } else {
-      // ── Read-only display ───────────────────────────────────────────────
+      // Read-only display
       ctx.fillStyle = color;
       ctx.beginPath(); ctx.arc(x + 22, y + 62, 7, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
