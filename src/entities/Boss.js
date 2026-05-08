@@ -35,13 +35,15 @@ const P3T = {
 const LUNGE_SPEED = 230;
 
 export class Boss {
-  constructor(level, x, y) {
+  constructor(level, x, y, config = null) {
     this.level   = level;
     this.x       = x;
     this.y       = y;
     this.radius  = RADIUS;
-    this.maxHp   = MAX_HP;
-    this.hp      = MAX_HP;
+    this.maxHp   = config?.bossHp    ?? MAX_HP;
+    this.hp      = this.maxHp;
+    this._p2Pct  = config?.bossP2Pct != null ? config.bossP2Pct / 100 : P2_PCT;
+    this._p3Pct  = config?.bossP3Pct != null ? config.bossP3Pct / 100 : P3_PCT;
     this.alive   = true;
     this.isEnemy  = true;
     this.isBoss   = true;
@@ -77,7 +79,7 @@ export class Boss {
 
   get _phase() {
     const pct = this.hp / this.maxHp;
-    return pct > P2_PCT ? 1 : pct > P3_PCT ? 2 : 3;
+    return pct > this._p2Pct ? 1 : pct > this._p3Pct ? 2 : 3;
   }
 
   // ── damage / death ────────────────────────────────────────────────────────
@@ -404,13 +406,13 @@ export class Boss {
 
     // Fill
     const pct = this.hp / this.maxHp;
-    ctx.fillStyle = pct > P2_PCT ? '#e03030' : pct > P3_PCT ? '#e07020' : '#ff2020';
+    ctx.fillStyle = pct > this._p2Pct ? '#e03030' : pct > this._p3Pct ? '#e07020' : '#ff2020';
     ctx.beginPath(); ctx.roundRect(barX, barY, barW * pct, barH, 2); ctx.fill();
 
     // Phase threshold markers
     ctx.strokeStyle = 'rgba(255,255,255,0.45)';
     ctx.lineWidth   = 1;
-    for (const marker of [P2_PCT, P3_PCT]) {
+    for (const marker of [this._p2Pct, this._p3Pct]) {
       const mx = barX + barW * marker;
       ctx.beginPath(); ctx.moveTo(mx, barY - 1); ctx.lineTo(mx, barY + barH + 1); ctx.stroke();
     }

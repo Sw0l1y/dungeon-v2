@@ -38,7 +38,7 @@ export class WaveManager {
       const { map, tileSize: ts } = this.level;
       const cx = Math.floor(map[0].length / 2) * ts + ts / 2;
       const cy = Math.floor(map.length    / 2) * ts + ts / 2;
-      const boss = new Boss(this.level, cx, cy);
+      const boss = new Boss(this.level, cx, cy, wcfg);
       boss._netId = ++this._netIdSeq;
       this.level.game.state._waveManager = this;
       this.level.addEntity(boss);

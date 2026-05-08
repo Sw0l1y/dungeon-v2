@@ -28,7 +28,8 @@
     }
     header h1 { font-size: 14px; font-weight: 700; color: var(--accent); letter-spacing: .05em; }
     header .spacer { flex: 1; }
-    #map-version-display { font-size: 11px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; }
+    .ver-badge { font-size: 11px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; }
+    .ver-badge span { color: var(--accent); font-weight: 700; }
     main { display: flex; flex: 1; overflow: hidden; }
 
     /* ── Timeline ────────────────────────────────────────────────────────── */
@@ -116,7 +117,20 @@
     .wave-field label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
     .wave-num-input { padding: 4px 5px; background: rgba(255,255,255,.06); border: 1px solid var(--border); border-radius: 5px; color: var(--text); font-family: inherit; font-size: 11px; text-align: center; width: 100%; outline: none; }
     .wave-num-input:focus { border-color: rgba(140,243,255,.5); }
-    .wave-boss-indicator { font-size: 11px; color: #ff7070; font-weight: 700; padding: 4px 0 2px; }
+
+    /* Boss phase editor */
+    .boss-phase-section { margin-top: 6px; }
+    .boss-phase-title { font-size: 9px; font-weight: 700; color: #ff7070; letter-spacing: .06em; text-transform: uppercase; margin-bottom: 5px; }
+    .boss-hp-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+    .boss-hp-row label { font-size: 9px; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; flex: 1; }
+    .boss-hp-input { padding: 4px 5px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,100,100,.3); border-radius: 5px; color: #ff9999; font-family: inherit; font-size: 11px; text-align: center; width: 62px; outline: none; }
+    .boss-hp-input:focus { border-color: #ff7070; }
+    .phase-bar-wrap { margin-bottom: 5px; }
+    .phase-bar-label { font-size: 9px; color: var(--muted); margin-bottom: 3px; display: flex; justify-content: space-between; align-items: center; }
+    .phase-bar-label span { font-size: 10px; color: #ffb070; font-weight: 700; }
+    .phase-slider { width: 100%; accent-color: #ff7040; cursor: pointer; height: 3px; }
+    .phase-hint { font-size: 8px; color: var(--muted); margin-top: 3px; line-height: 1.4; }
+
     .wave-actions { display: flex; gap: 4px; margin-top: 6px; }
     .wave-add-btn { flex: 1; padding: 5px; background: rgba(140,243,255,.05); border: 1px dashed rgba(140,243,255,.25); border-radius: 5px; color: rgba(140,243,255,.6); font-family: inherit; font-size: 10px; font-weight: 700; cursor: pointer; transition: all .1s; }
     .wave-add-btn:hover { background: rgba(140,243,255,.1); border-color: var(--accent); color: var(--accent); }
@@ -128,6 +142,8 @@
     .hdr-btn:hover { border-color: rgba(140,243,255,.5); background: rgba(140,243,255,.08); color: var(--accent); }
     .hdr-btn.primary { border-color: rgba(140,243,255,.4); color: var(--accent); }
     .hdr-btn.primary:hover { border-color: var(--accent); background: rgba(140,243,255,.12); }
+    #btn-undo:disabled { opacity: .3; cursor: default; }
+    #btn-undo:disabled:hover { border-color: var(--border); background: var(--panel); color: var(--text); }
 
     /* Toast */
     #toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: rgba(8,18,32,.96); border: 1px solid var(--accent); border-radius: 7px; padding: 7px 16px; font-size: 12px; color: var(--accent); pointer-events: none; opacity: 0; transition: opacity .22s; z-index: 99; }
@@ -139,7 +155,9 @@
   <header>
     <h1>⬡ DUNGEON MAP EDITOR</h1>
     <span class="spacer"></span>
-    <span id="map-version-display">map-v1.0</span>
+    <span class="ver-badge" id="editor-ver-badge">Editor <span id="editor-ver-text">v1.0</span></span>
+    <span class="ver-badge" id="map-version-display">map-v1.0</span>
+    <button class="hdr-btn" id="btn-undo" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
     <button class="hdr-btn" id="btn-load">📂 Load</button>
     <button class="hdr-btn primary" id="btn-save">💾 Save</button>
     <button class="hdr-btn" id="btn-download">⬇ Download</button>
@@ -245,6 +263,10 @@
 <div id="toast"></div>
 
 <script>
+// ── Editor version ─────────────────────────────────────────────────────────
+const EDITOR_VERSION = 'v1.1';
+document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
+
 // ── Constants ──────────────────────────────────────────────────────────────
 const TILE_PX = 24;
 
@@ -256,6 +278,38 @@ let spawnMode  = false;
 let painting   = false;
 let fsHandle   = null;
 let dragSrc    = null;
+
+// ── Undo stack ────────────────────────────────────────────────────────────
+// One stack per room (indexed by activeRoom); each entry = deep-copied tiles
+const undoStacks = {};   // roomIndex → array of tile snapshots
+
+function undoStack() {
+  if (!undoStacks[activeRoom]) undoStacks[activeRoom] = [];
+  return undoStacks[activeRoom];
+}
+
+function pushUndo() {
+  const room = state.campaign[activeRoom];
+  if (!room) return;
+  undoStack().push(room.tiles.map(r => [...r]));
+  // Keep at most 80 entries per room
+  if (undoStack().length > 80) undoStack().shift();
+  updateUndoBtn();
+}
+
+function undo() {
+  const stack = undoStack();
+  if (!stack.length) return;
+  const room = state.campaign[activeRoom];
+  room.tiles = stack.pop();
+  render();
+  updateUndoBtn();
+  showToast('Undo');
+}
+
+function updateUndoBtn() {
+  document.getElementById('btn-undo').disabled = undoStack().length === 0;
+}
 
 // ── DOM refs ──────────────────────────────────────────────────────────────
 const canvas     = document.getElementById('editor-canvas');
@@ -302,7 +356,7 @@ function defaultWaves() {
     { enemy: 4, sprinter: 1, ranger: 0, pairs: 0 },
     { enemy: 5, sprinter: 2, ranger: 1, pairs: 1 },
     { enemy: 6, sprinter: 3, ranger: 2, pairs: 1 },
-    { boss: true },
+    { boss: true, bossHp: 800, bossP2Pct: 60, bossP3Pct: 35 },
   ];
 }
 
@@ -411,7 +465,6 @@ function hexToLuminance(hex) {
   const r = parseInt(hex.slice(1,3), 16) / 255;
   const g = parseInt(hex.slice(3,5), 16) / 255;
   const b = parseInt(hex.slice(5,7), 16) / 255;
-  // WCAG relative luminance approximation (simple version)
   const toL = v => v <= .03928 ? v/12.92 : Math.pow((v+.055)/1.055, 2.4);
   return .2126*toL(r) + .7152*toL(g) + .0722*toL(b);
 }
@@ -466,7 +519,7 @@ colorDestr.addEventListener('input', applyColors);
 
 // ── Wave section ──────────────────────────────────────────────────────────
 function waveSummary(w) {
-  if (w.boss) return '★ Boss';
+  if (w.boss) return `★ Boss  HP:${w.bossHp ?? 800}`;
   const parts = [];
   if (w.enemy)    parts.push(`${w.enemy}E`);
   if (w.sprinter) parts.push(`${w.sprinter}S`);
@@ -488,14 +541,38 @@ function buildWaveList() {
     row.className = 'wave-row' + (openWave === i ? ' open' : '');
 
     const isBoss = !!w.boss;
-    row.innerHTML = `
-      <div class="wave-row-head">
-        <span class="wave-num">W${i+1}</span>
-        <span class="wave-summary">${waveSummary(w)}</span>
-        <button class="wave-del" data-idx="${i}" title="Delete wave">✕</button>
-      </div>
-      <div class="wave-body">
-        ${isBoss ? `<div class="wave-boss-indicator">★ Boss wave — spawns at arena center</div>` : `
+
+    let bodyHTML;
+    if (isBoss) {
+      const hp   = w.bossHp    ?? 800;
+      const p2   = w.bossP2Pct ?? 60;
+      const p3   = w.bossP3Pct ?? 35;
+      bodyHTML = `
+        <div class="boss-phase-section">
+          <div class="boss-phase-title">★ Boss Configuration</div>
+          <div class="boss-hp-row">
+            <label>Max HP</label>
+            <input class="boss-hp-input" type="number" min="100" max="9999" step="50"
+              data-field="bossHp" data-idx="${i}" value="${hp}" />
+          </div>
+          <div class="phase-bar-wrap">
+            <div class="phase-bar-label">
+              Phase 1→2 at <span id="p2-val-${i}">${p2}%</span>
+            </div>
+            <input class="phase-slider" type="range" min="10" max="90" step="1"
+              data-field="bossP2Pct" data-idx="${i}" data-label="p2-val-${i}" value="${p2}" />
+          </div>
+          <div class="phase-bar-wrap">
+            <div class="phase-bar-label">
+              Phase 2→3 at <span id="p3-val-${i}">${p3}%</span>
+            </div>
+            <input class="phase-slider" type="range" min="5" max="80" step="1"
+              data-field="bossP3Pct" data-idx="${i}" data-label="p3-val-${i}" value="${p3}" />
+          </div>
+          <p class="phase-hint">P1→2 must be &gt; P2→3. Phase 3 = lunge+vulnerability state.</p>
+        </div>`;
+    } else {
+      bodyHTML = `
         <div class="wave-inputs">
           <div class="wave-field">
             <label>Enemy</label>
@@ -513,8 +590,16 @@ function buildWaveList() {
             <label>Pulsar Pair</label>
             <input class="wave-num-input" type="number" min="0" max="5" data-field="pairs" data-idx="${i}" value="${w.pairs ?? 0}" />
           </div>
-        </div>`}
+        </div>`;
+    }
+
+    row.innerHTML = `
+      <div class="wave-row-head">
+        <span class="wave-num">W${i+1}</span>
+        <span class="wave-summary">${waveSummary(w)}</span>
+        <button class="wave-del" data-idx="${i}" title="Delete wave">✕</button>
       </div>
+      <div class="wave-body">${bodyHTML}</div>
     `;
 
     // Toggle open/close on header click
@@ -532,14 +617,39 @@ function buildWaveList() {
       buildWaveList();
     });
 
-    // Field inputs
-    if (!isBoss) {
+    if (isBoss) {
+      // Boss HP number input
+      row.querySelector(`[data-field="bossHp"]`).addEventListener('input', inp => {
+        const val = Math.max(100, Math.min(9999, parseInt(inp.target.value) || 800));
+        room.waves[i].bossHp = val;
+        row.querySelector('.wave-summary').textContent = waveSummary(room.waves[i]);
+      });
+      // Phase sliders
+      row.querySelectorAll('.phase-slider').forEach(slider => {
+        slider.addEventListener('input', () => {
+          const field = slider.dataset.field;
+          const val   = parseInt(slider.value);
+          const labelId = slider.dataset.label;
+          room.waves[i][field] = val;
+          document.getElementById(labelId).textContent = val + '%';
+          // Enforce p2 > p3
+          const p2 = room.waves[i].bossP2Pct ?? 60;
+          const p3 = room.waves[i].bossP3Pct ?? 35;
+          if (p3 >= p2) {
+            if (field === 'bossP2Pct') room.waves[i].bossP3Pct = Math.max(5, p2 - 5);
+            else                        room.waves[i].bossP2Pct = Math.min(90, p3 + 5);
+            // Rebuild to reflect clamped values
+            buildWaveList();
+          }
+        });
+      });
+    } else {
+      // Normal wave number inputs
       row.querySelectorAll('.wave-num-input').forEach(inp => {
         inp.addEventListener('input', () => {
           const idx   = parseInt(inp.dataset.idx);
           const field = inp.dataset.field;
           room.waves[idx][field] = Math.max(0, parseInt(inp.value) || 0);
-          // Update summary without collapsing
           row.querySelector('.wave-summary').textContent = waveSummary(room.waves[idx]);
         });
       });
@@ -560,7 +670,7 @@ document.getElementById('add-wave-btn').addEventListener('click', () => {
 document.getElementById('add-boss-btn').addEventListener('click', () => {
   const room = state.campaign[activeRoom];
   if (!room) return;
-  room.waves.push({ boss: true });
+  room.waves.push({ boss: true, bossHp: 800, bossP2Pct: 60, bossP3Pct: 35 });
   openWave = room.waves.length - 1;
   buildWaveList();
 });
@@ -601,11 +711,13 @@ function selectRoom(i) {
   buildTimeline();
   syncColorPickers();
   buildWaveList();
+  updateUndoBtn();
   render();
 }
 
 function deleteRoom(i) {
   if (state.campaign.length <= 1) { showToast('Cannot delete last room'); return; }
+  delete undoStacks[i];
   state.campaign.splice(i, 1);
   if (activeRoom >= state.campaign.length) activeRoom = state.campaign.length - 1;
   selectRoom(activeRoom);
@@ -614,6 +726,14 @@ function deleteRoom(i) {
 function moveRoom(from, to) {
   const [room] = state.campaign.splice(from, 1);
   state.campaign.splice(to, 0, room);
+  // Remap undo stacks after reorder
+  const newStacks = {};
+  state.campaign.forEach((_, ni) => {
+    const oldIdx = ni === to ? from : (ni >= Math.min(from,to) && ni <= Math.max(from,to) ? ni + (from < to ? -1 : 1) : ni);
+    if (undoStacks[oldIdx]) newStacks[ni] = undoStacks[oldIdx];
+  });
+  Object.keys(undoStacks).forEach(k => delete undoStacks[k]);
+  Object.assign(undoStacks, newStacks);
   activeRoom = to;
   selectRoom(activeRoom);
 }
@@ -639,7 +759,12 @@ function paintAt(e) {
   if (room.tiles[row][col] !== tile) { room.tiles[row][col] = tile; render(); }
 }
 
-canvas.addEventListener('mousedown',  e => { e.preventDefault(); painting = true; paintAt(e); });
+canvas.addEventListener('mousedown',  e => {
+  e.preventDefault();
+  if (!spawnMode) pushUndo();   // snapshot before stroke begins
+  painting = true;
+  paintAt(e);
+});
 canvas.addEventListener('mousemove',  e => { if (painting) paintAt(e); });
 canvas.addEventListener('mouseup',    () => { painting = false; });
 canvas.addEventListener('mouseleave', () => { painting = false; });
@@ -670,7 +795,11 @@ window.addEventListener('keydown', e => {
   if (e.key === '3') { activeTile = 2; setSpawnMode(false); updateTileButtons(); }
   if (e.key === '4') { setSpawnMode(!spawnMode); }
   if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveFile(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
 });
+
+// Undo button
+document.getElementById('btn-undo').addEventListener('click', undo);
 
 // ── Room name ─────────────────────────────────────────────────────────────
 nameInput.addEventListener('input', () => {
@@ -689,6 +818,7 @@ document.getElementById('apply-resize').addEventListener('click', () => {
   const room    = state.campaign[activeRoom];
   const newCols = Math.max(10, Math.min(60, parseInt(colsInput.value) || room.cols));
   const newRows = Math.max(8,  Math.min(40, parseInt(rowsInput.value) || room.rows));
+  pushUndo();
   const newTiles = [];
   for (let r = 0; r < newRows; r++) {
     const row = [];
@@ -734,6 +864,16 @@ function buildJSON() {
 }
 
 // ── Parse ─────────────────────────────────────────────────────────────────
+function normaliseBossWave(w) {
+  if (!w.boss) return { ...w };
+  return {
+    boss:      true,
+    bossHp:    w.bossHp    ?? 800,
+    bossP2Pct: w.bossP2Pct ?? 60,
+    bossP3Pct: w.bossP3Pct ?? 35,
+  };
+}
+
 function loadJSON(text) {
   let data;
   try { data = JSON.parse(text); } catch { showToast('Invalid JSON'); return; }
@@ -747,9 +887,11 @@ function loadJSON(text) {
     tileSize:    r.tileSize || 40,
     playerSpawn: r.playerSpawn ? { ...r.playerSpawn } : { col: Math.floor((r.cols||30)/2), row: Math.floor((r.rows||17)/2) },
     tileColors:  r.tileColors  ? { ...r.tileColors  } : { floor: '#22304a', wall: '#1a2340', destructible: '#1a2340' },
-    waves:       r.waves       ? r.waves.map(w => ({ ...w })) : defaultWaves(),
+    waves:       r.waves       ? r.waves.map(normaliseBossWave) : defaultWaves(),
     tiles:       r.tiles.map(row => [...row]),
   }));
+  // Clear undo stacks on fresh load
+  Object.keys(undoStacks).forEach(k => delete undoStacks[k]);
   verInput.value = state.mapVersion;
   verDisplay.textContent = state.mapVersion;
   activeRoom = 0; openWave = -1;
@@ -820,6 +962,7 @@ function showToast(msg) {
   seedLevel1();
   verInput.value = state.mapVersion; verDisplay.textContent = state.mapVersion;
   updateTileButtons();
+  updateUndoBtn();
 
   const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
   const mapsUrl = isLocal ? '../src/data/maps.json' : '/games/dungeon-v2/src/data/maps.json';

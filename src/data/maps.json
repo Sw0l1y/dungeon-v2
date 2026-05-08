@@ -18,7 +18,7 @@
         { "enemy": 4, "sprinter": 1, "ranger": 0, "pairs": 0 },
         { "enemy": 5, "sprinter": 2, "ranger": 1, "pairs": 1 },
         { "enemy": 6, "sprinter": 3, "ranger": 2, "pairs": 1 },
-        { "boss": true }
+        { "boss": true, "bossHp": 800, "bossP2Pct": 60, "bossP3Pct": 35 }
       ],
       "tiles": [
         [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
