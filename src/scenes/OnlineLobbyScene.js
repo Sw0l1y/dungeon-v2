@@ -90,8 +90,14 @@ export class OnlineLobbyScene extends Scene {
               ? data.idx
               : this._findRemoteIdx();
             if (ri !== -1) {
-              if (typeof data.n === 'string') this._slots[ri].name     = data.n;
-              if (typeof data.c === 'number') this._slots[ri].colorIdx = data.c;
+              if (typeof data.n === 'string') this._slots[ri].name = data.n;
+              // Only apply the color if it isn't already taken by another active slot
+              if (typeof data.c === 'number' && !this._colorTaken(ri, data.c)) {
+                this._slots[ri].colorIdx = data.c;
+              } else if (typeof data.c === 'number') {
+                // Reject: force a re-sync so client sees the correct state
+                this._syncLobby();
+              }
             }
           }
           // Client wants to add their 2nd local player as a remote slot
@@ -194,6 +200,13 @@ export class OnlineLobbyScene extends Scene {
 
   _findRemoteIdx() {
     return this._slots?.findIndex(s => s.isRemote) ?? -1;
+  }
+
+  // Returns true if any OTHER active slot already uses this color
+  _colorTaken(slotIdx, colorIdx) {
+    return (this._slots ?? []).some(
+      (s, i) => i !== slotIdx && s.active && s.colorIdx === colorIdx,
+    );
   }
 
   // ── Sync ───────────────────────────────────────────────────────────────────
@@ -397,9 +410,12 @@ export class OnlineLobbyScene extends Scene {
 
         for (let ci = 0; ci < COLORS.length; ci++) {
           if (this._hit(this._colorSwatch(card, ci), pt)) {
-            slot.colorIdx = ci;
-            if (isHost) this._syncLobby();
-            else this._net?.send({ t: 'clientUpdate', idx, c: ci });
+            // Prevent picking a color another active player already has
+            if (!this._colorTaken(idx, ci)) {
+              slot.colorIdx = ci;
+              if (isHost) this._syncLobby();
+              else this._net?.send({ t: 'clientUpdate', idx, c: ci });
+            }
             return;
           }
         }
@@ -877,11 +893,12 @@ export class OnlineLobbyScene extends Scene {
       ctx.fillText('COLOR', x + 14, y + 100);
 
       for (let ci = 0; ci < COLORS.length; ci++) {
-        const s   = this._colorSwatch(card, ci);
-        const sel = slot.colorIdx === ci;
-        const sv  = !sel && this._hit(s, this._mouse);
+        const s      = this._colorSwatch(card, ci);
+        const sel    = slot.colorIdx === ci;
+        const taken  = !sel && this._colorTaken(idx, ci);
+        const sv     = !sel && !taken && this._hit(s, this._mouse);
 
-        ctx.globalAlpha = sel ? 1 : 0.6;
+        ctx.globalAlpha = taken ? 0.18 : sel ? 1 : 0.6;
         ctx.fillStyle = COLORS[ci];
         ctx.beginPath(); ctx.roundRect(s.x, s.y, s.w, s.h, 5); ctx.fill();
         ctx.globalAlpha = 1;
@@ -892,6 +909,12 @@ export class OnlineLobbyScene extends Scene {
         } else if (sv) {
           ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5;
           ctx.beginPath(); ctx.roundRect(s.x - 2, s.y - 2, s.w + 4, s.h + 4, 7); ctx.stroke();
+        } else if (taken) {
+          // Draw a small × to signal it's taken
+          ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5;
+          const cx2 = s.x + s.w / 2, cy2 = s.y + s.h / 2, r = 5;
+          ctx.beginPath(); ctx.moveTo(cx2 - r, cy2 - r); ctx.lineTo(cx2 + r, cy2 + r); ctx.stroke();
+          ctx.beginPath(); ctx.moveTo(cx2 + r, cy2 - r); ctx.lineTo(cx2 - r, cy2 + r); ctx.stroke();
         }
       }
 

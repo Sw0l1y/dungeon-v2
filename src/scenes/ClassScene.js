@@ -32,23 +32,38 @@ export class ClassScene extends Scene {
 
   onEnter() {
     const allPlayers = this.game.state.players;
+    const net        = this.game.state.netSession ?? null;
+    const role       = this.game.state.netRole    ?? null;
 
-    // Remote players (online) get a default class and are hidden from the UI.
-    // Local players start with no selection (null).
+    // Remote players (other device) get their last-known classId as a starting
+    // point; local players start with null (must pick).
     this._selections = allPlayers.map(p => p.remote ? (p.classId ?? 'sword') : null);
 
-    // Only show the non-remote players in the selection UI
-    this._localIdxs = allPlayers.map((p, i) => i).filter(i => !allPlayers[i].remote);
+    // Which player indices belong to this device vs. the other device
+    this._localIdxs  = allPlayers.map((p, i) => i).filter(i => !allPlayers[i].remote);
+    this._remoteIdxs = allPlayers.map((p, i) => i).filter(i =>  allPlayers[i].remote);
 
     this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
 
-    // Online: client listens for host's start signal
-    const net  = this.game.state.netSession ?? null;
-    const role = this.game.state.netRole    ?? null;
-    if (net && role === 'client') {
+    // ── Net message handlers ───────────────────────────────────────────────
+    if (net) {
       net.onMessage = (data) => {
-        if (data.t === 'start') this._netLaunch();
+        // Other device broadcasting their current picks
+        if (data.t === 'classSync' && data.s) {
+          for (const [idxStr, clsId] of Object.entries(data.s)) {
+            const idx = parseInt(idxStr, 10);
+            // Only update indices owned by the remote device
+            if (this._remoteIdxs.includes(idx)) this._selections[idx] = clsId;
+          }
+        }
+        // Host launching — carries the full authoritative selection map
+        if (data.t === 'start' && data.s) {
+          for (const [idxStr, clsId] of Object.entries(data.s)) {
+            this._selections[parseInt(idxStr, 10)] = clsId;
+          }
+          this._finalize();
+        }
       };
     }
 
@@ -106,10 +121,10 @@ export class ClassScene extends Scene {
   // ── update ────────────────────────────────────────────────────────────────
 
   update(_dt) {
-    const click = this._pendingClick;
+    const click   = this._pendingClick;
     this._pendingClick = null;
 
-    const role = this.game.state.netRole ?? null;
+    const role     = this.game.state.netRole ?? null;
     const isClient = role === 'client';
 
     // Host / local: Enter confirms when all selected
@@ -133,13 +148,30 @@ export class ClassScene extends Scene {
     this._localIdxs.forEach((playerGlobalIdx, sectionIdx) => {
       CLASSES.forEach((cls, cIdx) => {
         if (this._hit(this._classCard(sectionIdx, cIdx), pt)) {
-          const takenByOtherLocal = this._localIdxs.some(
-            (gi, si) => si !== sectionIdx && this._selections[gi] === cls.id,
+          // Locked if ANY player (local or remote) already chose this class
+          const takenByAny = this._selections.some(
+            (sel, gi) => gi !== playerGlobalIdx && sel === cls.id,
           );
-          if (!takenByOtherLocal) this._selections[playerGlobalIdx] = cls.id;
+          if (!takenByAny) {
+            this._selections[playerGlobalIdx] = cls.id;
+            this._broadcastSelections();
+          }
         }
       });
     });
+  }
+
+  // ── net sync ───────────────────────────────────────────────────────────────
+
+  // Send this device's current picks to the other device
+  _broadcastSelections() {
+    const net = this.game.state.netSession ?? null;
+    if (!net) return;
+    const s = {};
+    for (const gi of this._localIdxs) {
+      if (this._selections[gi] !== null) s[gi] = this._selections[gi];
+    }
+    net.send({ t: 'classSync', s });
   }
 
   // ── launch ────────────────────────────────────────────────────────────────
@@ -148,14 +180,15 @@ export class ClassScene extends Scene {
     const net  = this.game.state.netSession ?? null;
     const role = this.game.state.netRole    ?? null;
 
-    // Host: signal client to start
-    if (role === 'host') net?.send({ t: 'start' });
+    if (role === 'host') {
+      // Build the authoritative final map (fill any un-picked remotes with 'sword')
+      const s = {};
+      for (let i = 0; i < this._selections.length; i++) {
+        s[i] = this._selections[i] ?? 'sword';
+      }
+      net?.send({ t: 'start', s });
+    }
 
-    this._finalize();
-  }
-
-  // Called on client when host sends {t:'start'}
-  _netLaunch() {
     this._finalize();
   }
 
@@ -223,9 +256,9 @@ export class ClassScene extends Scene {
       CLASSES.forEach((cls, cIdx) => {
         const card     = this._classCard(sectionIdx, cIdx);
         const selected = this._selections[globalIdx] === cls.id;
-        // A class is locked if another LOCAL player already claimed it
-        const locked   = this._localIdxs.some(
-          (gi, si) => si !== sectionIdx && this._selections[gi] === cls.id,
+        // Locked if any other player (local or remote) already chose this class
+        const locked   = this._selections.some(
+          (sel, gi) => gi !== globalIdx && sel === cls.id,
         );
         const hovered  = !locked && this._hit(card, this._mouse);
         this._drawClassCard(ctx, card, cls, p.color, selected, hovered, locked);
@@ -246,7 +279,7 @@ export class ClassScene extends Scene {
     } else {
       // Host or local: draw START button
       const startBtn   = this._startBtn();
-      const startHover = this._hit(startBtn, this._mouse);
+      const startHover = canStart && this._hit(startBtn, this._mouse);
       ctx.fillStyle = canStart
         ? (startHover ? 'rgba(140,243,255,0.2)' : 'rgba(140,243,255,0.09)')
         : 'rgba(255,255,255,0.04)';
