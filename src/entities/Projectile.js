@@ -1,12 +1,12 @@
 export class Projectile {
   constructor(level, x, y, vx, vy, owner) {
-    this.level    = level;
-    this.x        = x;
-    this.y        = y;
-    this.vx       = vx;
-    this.vy       = vy;
-    this.owner    = owner;
-    this.radius   = 5;
+    this.level     = level;
+    this.x         = x;
+    this.y         = y;
+    this.vx        = vx;
+    this.vy        = vy;
+    this.owner     = owner;
+    this.radius    = 5;
     this._lifetime = 3;
   }
 
@@ -36,19 +36,106 @@ export class Projectile {
     }
   }
 
-  draw(ctx) {
-    // Trail
-    const tx = this.x - (this.vx / 420) * 14;
-    const ty = this.y - (this.vy / 420) * 14;
-    ctx.fillStyle = this.owner.color + '55';
+  // Draw one arrow instance at (x, y) facing (dx, dy) at a given alpha.
+  // px/py is the perpendicular unit vector for the arrowhead wings.
+  _drawArrow(ctx, x, y, dx, dy, px, py, alpha) {
+    if (alpha < 0.01) return;
+    const color = this.owner.color;
+
+    // ── Arrow geometry ────────────────────────────────────────────────────────
+    const HEAD_FWD  = 8;    // tip ahead of center
+    const SHAFT_BK  = 13;   // shaft tail behind center
+    const BASE_BK   = 3;    // arrowhead base behind tip
+    const HEAD_WING = 4.5;  // arrowhead half-width
+    const FLETCH_BK = 10;   // fletching V behind center
+    const FLETCH_W  = 4;    // fletching half-width
+    const FLETCH_FW = 3;    // fletching forward reach
+
+    const tipX   = x + dx * HEAD_FWD;
+    const tipY   = y + dy * HEAD_FWD;
+    const baseX  = tipX - dx * BASE_BK;    // arrowhead base centre
+    const baseY  = tipY - dy * BASE_BK;
+    const tailX  = x - dx * SHAFT_BK;
+    const tailY  = y - dy * SHAFT_BK;
+    const flBX   = x - dx * FLETCH_BK;    // fletching root
+    const flBY   = y - dy * FLETCH_BK;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // Layer 1 — wide outer halo (whole length)
+    ctx.globalAlpha = alpha * 0.10;
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 18;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(tipX, tipY); ctx.stroke();
+
+    // Layer 2 — mid glow
+    ctx.globalAlpha = alpha * 0.27;
+    ctx.lineWidth   = 9;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(tipX, tipY); ctx.stroke();
+
+    // Layer 3 — inner colored shaft (tail → arrowhead base only)
+    ctx.globalAlpha = alpha * 0.78;
+    ctx.lineWidth   = 3.5;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(baseX, baseY); ctx.stroke();
+
+    // Layer 4 — white shaft core
+    ctx.globalAlpha = alpha * 0.92;
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(baseX, baseY); ctx.stroke();
+
+    // Arrowhead — colored triangle
+    ctx.globalAlpha = alpha * 0.92;
+    ctx.fillStyle   = color;
     ctx.beginPath();
-    ctx.arc(tx, ty, this.radius * 0.6, 0, Math.PI * 2);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + px * HEAD_WING, baseY + py * HEAD_WING);
+    ctx.lineTo(baseX - px * HEAD_WING, baseY - py * HEAD_WING);
+    ctx.closePath();
     ctx.fill();
 
-    // Head
-    ctx.fillStyle = this.owner.color;
+    // Arrowhead — white highlight sliver
+    ctx.globalAlpha = alpha * 0.78;
+    ctx.fillStyle   = '#ffffff';
     ctx.beginPath();
-    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + px * HEAD_WING * 0.38, baseY + py * HEAD_WING * 0.38);
+    ctx.lineTo(baseX - px * HEAD_WING * 0.38, baseY - py * HEAD_WING * 0.38);
+    ctx.closePath();
     ctx.fill();
+
+    // Fletching — V-shape at tail
+    ctx.globalAlpha = alpha * 0.55;
+    ctx.strokeStyle = color;
+    ctx.lineWidth   = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(flBX + px * FLETCH_W, flBY + py * FLETCH_W);
+    ctx.lineTo(flBX + dx * FLETCH_FW, flBY + dy * FLETCH_FW);
+    ctx.lineTo(flBX - px * FLETCH_W, flBY - py * FLETCH_W);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  draw(ctx) {
+    const speed = Math.hypot(this.vx, this.vy);
+    const dx    = this.vx / speed;
+    const dy    = this.vy / speed;
+    const px    = -dy;  // perpendicular (right-hand)
+    const py    =  dx;
+
+    // ── Trail: ghost arrows spaced behind the main one ─────────────────────
+    const TRAIL_N   = 7;
+    const TRAIL_GAP = 9; // px between ghost positions
+    for (let i = TRAIL_N; i >= 1; i--) {
+      const tx    = this.x - dx * i * TRAIL_GAP;
+      const ty    = this.y - dy * i * TRAIL_GAP;
+      const alpha = (1 - i / (TRAIL_N + 1)) * 0.42;
+      this._drawArrow(ctx, tx, ty, dx, dy, px, py, alpha);
+    }
+
+    // ── Main arrow head ────────────────────────────────────────────────────
+    this._drawArrow(ctx, this.x, this.y, dx, dy, px, py, 1);
   }
 }

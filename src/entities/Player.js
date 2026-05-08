@@ -307,14 +307,34 @@ export class Player {
       ctx.translate(-this.x, -this.y);
     }
 
-    // Rogue dash trail
-    for (const t of this._dashTrail) {
+    // Rogue dash trail — glowing lightsaber streak between trail points
+    const trail = this._dashTrail;
+    for (let i = 1; i < trail.length; i++) {
+      const p0 = trail[i - 1];
+      const p1 = trail[i];
+      const a  = (p0.a + p1.a) * 0.5;
+      if (a < 0.01) continue;
+      const color = this.color;
       ctx.save();
-      ctx.globalAlpha = t.a;
-      ctx.fillStyle = this.color;
-      ctx.beginPath();
-      ctx.arc(t.x, t.y, this.radius * 0.65, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.lineCap = 'round';
+      // Outer halo
+      ctx.globalAlpha = a * 0.10;
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 28;
+      ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+      // Mid glow
+      ctx.globalAlpha = a * 0.25;
+      ctx.lineWidth   = 14;
+      ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+      // Inner color
+      ctx.globalAlpha = a * 0.65;
+      ctx.lineWidth   = 6;
+      ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
+      // White core
+      ctx.globalAlpha = a * 0.90;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth   = 2;
+      ctx.beginPath(); ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y); ctx.stroke();
       ctx.restore();
     }
 
