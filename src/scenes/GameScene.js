@@ -1,14 +1,14 @@
-import { Scene       } from './Scene.js';
-import { Camera      } from '../systems/Camera.js';
-import { Level1      } from '../levels/Level1.js';
-import { WaveManager } from '../systems/WaveManager.js';
-import { DeathScene  } from './DeathScene.js';
-import { PauseScene  } from './PauseScene.js';
-import { TitleScene  } from './TitleScene.js';
-import { Portal      } from '../entities/Portal.js';
-
-// Ghost-enemy type colours (client-side only, index matches _typeIdx)
-const GHOST_COLORS = ['#ff6b6b', '#ff4040', '#ff9040', '#dd0044'];
+import { Scene          } from './Scene.js';
+import { Camera         } from '../systems/Camera.js';
+import { Level1         } from '../levels/Level1.js';
+import { WaveManager    } from '../systems/WaveManager.js';
+import { DeathScene     } from './DeathScene.js';
+import { PauseScene     } from './PauseScene.js';
+import { TitleScene     } from './TitleScene.js';
+import { Portal         } from '../entities/Portal.js';
+import { Projectile     } from '../entities/Projectile.js';
+import { SwordSwing     } from '../entities/SwordSwing.js';
+import { EnemyProjectile} from '../entities/EnemyProjectile.js';
 
 export class GameScene extends Scene {
   onEnter() {
@@ -26,18 +26,33 @@ export class GameScene extends Scene {
     this._hostPlayerCount  = this.game.state.hostPlayerCount  ?? 2;
     this._clientPlayerCount = this.game.state.clientPlayerCount ?? 2;
 
-    // Ghost enemies shown on client (map of netId → {typeIdx, x, y})
+    // Ghost enemies shown on client (map of netId → {typeIdx, x, y, hpPct})
     this._ghosts     = new Map();
+    // Ghost projectiles (client only): player, sword swings, enemy
+    this._ghostProjPl = [];
+    this._ghostProjSw = [];
+    this._ghostProjEp = [];
     // Authoritative wave state received from host (used for client HUD)
     this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
     // Send-rate timers
     this._sendTimer  = 0;
     // Disconnect overlay
     this._netDisconnected = false;
+    // Buffered fx events to include in next state packet (host only)
+    this._pendingEvents = [];
 
     if (this._net) {
       this._net.onMessage      = (data) => this._onNetMsg(data);
       this._net.onDisconnected = ()     => { this._netDisconnected = true; };
+    }
+
+    // Intercept death particle spawns so the host can relay them to the client
+    if (this._netRole === 'host') {
+      const origSpawn = this.level.spawnDeathParticles.bind(this.level);
+      this.level.spawnDeathParticles = (x, y, color, count) => {
+        origSpawn(x, y, color, count);
+        this._pendingEvents.push({ k: 'd', x: Math.round(x), y: Math.round(y), c: color, n: count });
+      };
     }
 
     // ── Intro portal ──────────────────────────────────────────────────────────
@@ -394,7 +409,18 @@ export class GameScene extends Scene {
 
   /** Build game-state packet (host → client, 20 hz). */
   _buildStatePacket() {
-    const ps = this.level.players;
+    const ps   = this.level.players;
+    const ents = this.level.entities;
+    const hc   = this._hostPlayerCount;
+
+    // Only relay projectiles/swings from HOST-LOCAL players.
+    // Client-local players already render their own attacks locally, so we
+    // skip them here to avoid doubled visuals.
+    const isHostPlayerProj = (e) => {
+      const ownerIdx = ps.indexOf(e.owner);
+      return ownerIdx >= 0 && ownerIdx < hc;
+    };
+
     return {
       t: 'gs',
       p: ps.map(pl => ({
@@ -405,9 +431,31 @@ export class GameScene extends Scene {
         fx: pl._facingX,
         fy: pl._facingY,
       })),
-      en: this.level.entities
+      // Enemies: [netId, typeIdx, x, y, hpPct0-255]
+      en: ents
         .filter(e => e.isEnemy && e.alive)
-        .map(e => [e._netId, e._typeIdx, Math.round(e.x), Math.round(e.y)]),
+        .map(e => [
+          e._netId, e._typeIdx,
+          Math.round(e.x), Math.round(e.y),
+          Math.round(e.hp / e.maxHp * 255),
+        ]),
+      // Projectiles from host-local players and enemies
+      proj: {
+        pl: ents
+          .filter(e => e instanceof Projectile && isHostPlayerProj(e))
+          .map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), e.owner?.color ?? '#fff']),
+        sw: ents
+          .filter(e => e instanceof SwordSwing && isHostPlayerProj(e))
+          .map(e => [
+            Math.round(e.x), Math.round(e.y),
+            +e.dirX.toFixed(3), +e.dirY.toFixed(3),
+            +(1 - e._timer / e._duration).toFixed(3),
+            e.owner?.color ?? '#fff',
+          ]),
+        ep: ents
+          .filter(e => e instanceof EnemyProjectile)
+          .map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy)]),
+      },
       wv: {
         n:   this.waves.wave,
         act: this.waves.active       ? 1 : 0,
@@ -415,6 +463,8 @@ export class GameScene extends Scene {
         bd:  this.waves.bossDefeated ? 1 : 0,
         cd:  this.waves.countdown,
       },
+      // Buffered events (death particles, etc.) since last packet
+      ev: this._pendingEvents.splice(0),
     };
   }
 
@@ -477,14 +527,29 @@ export class GameScene extends Scene {
     // Update ghost enemies (purely visual — client renders, host does all AI/damage)
     if (state.en) {
       const seen = new Set();
-      for (const [id, typeIdx, x, y] of state.en) {
+      for (const [id, typeIdx, x, y, hpPct255] of state.en) {
         seen.add(id);
+        const hpPct = (hpPct255 ?? 255) / 255;
         const g = this._ghosts.get(id);
-        if (g) { g.x = x; g.y = y; }
-        else    this._ghosts.set(id, { id, typeIdx, x, y });
+        if (g) { g.x = x; g.y = y; g.hpPct = hpPct; }
+        else    this._ghosts.set(id, { id, typeIdx, x, y, hpPct });
       }
       for (const id of this._ghosts.keys()) {
         if (!seen.has(id)) this._ghosts.delete(id);
+      }
+    }
+
+    // Ghost projectiles
+    if (state.proj) {
+      this._ghostProjPl = state.proj.pl ?? [];
+      this._ghostProjSw = state.proj.sw ?? [];
+      this._ghostProjEp = state.proj.ep ?? [];
+    }
+
+    // FX events: spawn death particles on client's level for visual parity
+    if (state.ev) {
+      for (const ev of state.ev) {
+        if (ev.k === 'd') this.level.spawnDeathParticles(ev.x, ev.y, ev.c, ev.n);
       }
     }
 
@@ -516,8 +581,11 @@ export class GameScene extends Scene {
 
     this.level.draw(ctx);
 
-    // Ghost enemies (client only)
-    if (this._netRole === 'client') this._drawGhosts(ctx);
+    // Ghost enemies + projectiles (client only)
+    if (this._netRole === 'client') {
+      this._drawGhosts(ctx);
+      this._drawGhostProjectiles(ctx);
+    }
 
     if (this._introPhase !== 'done') {
       this._drawIntroParticles(ctx);  // particles on top of tiles/players
@@ -534,20 +602,172 @@ export class GameScene extends Scene {
     if (this._netDisconnected) this._drawDisconnect(ctx);
   }
 
-  /** Draw simple ghost representations of enemies on the client. */
+  /** Draw ghost enemies on the client, matching each type's actual visuals. */
   _drawGhosts(ctx) {
     for (const g of this._ghosts.values()) {
-      ctx.save();
-      ctx.globalAlpha = 0.78;
-      ctx.fillStyle   = GHOST_COLORS[g.typeIdx] ?? '#ff6b6b';
+      switch (g.typeIdx) {
+        case 0: this._drawGhostEnemy(ctx, g);    break;
+        case 1: this._drawGhostSprinter(ctx, g); break;
+        case 2: this._drawGhostRanger(ctx, g);   break;
+        case 3: this._drawGhostBoss(ctx, g);     break;
+      }
+    }
+  }
+
+  _drawGhostHealthBar(ctx, x, y, offsetY, barW, barH, hpPct) {
+    const barX = x - barW / 2;
+    const barY = y + offsetY;
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(barX, barY, barW, barH);
+    ctx.fillStyle = hpPct > 0.5 ? '#4cff72' : hpPct > 0.25 ? '#ffd24c' : '#ff4c4c';
+    ctx.fillRect(barX, barY, barW * hpPct, barH);
+  }
+
+  _drawGhostEnemy(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    ctx.strokeStyle = 'rgba(255,60,60,0.35)';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#e03030';
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+    this._drawGhostHealthBar(ctx, x, y, -21, 28, 3, hpPct);
+  }
+
+  _drawGhostSprinter(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    ctx.strokeStyle = 'rgba(255,220,0,0.4)';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ffe033';
+    ctx.beginPath(); ctx.arc(x, y, 9, 0, Math.PI * 2); ctx.fill();
+    this._drawGhostHealthBar(ctx, x, y, -19, 24, 3, hpPct);
+  }
+
+  _drawGhostRanger(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    ctx.strokeStyle = 'rgba(255,130,0,0.4)';
+    ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(x, y, 18, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ff8c00';
+    ctx.beginPath(); ctx.arc(x, y, 13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, Math.PI * 2); ctx.fill();
+    this._drawGhostHealthBar(ctx, x, y, -25, 28, 3, hpPct);
+  }
+
+  _drawGhostBoss(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    const RADIUS  = 38;
+    const phase   = hpPct > 0.60 ? 1 : hpPct > 0.35 ? 2 : 3;
+    const t       = Date.now();
+    const angle   = (t / 500) * 2.0;   // approximate spiral angle
+    const flicker = phase === 3 && Math.floor(t / 110) % 3 === 0;
+
+    const bodyColor   = phase === 1 ? '#6b0018' : phase === 2 ? '#7a2200' : '#990000';
+    const accentColor = phase === 3 ? '#ff3333' : phase === 2 ? '#ff7733' : '#ff2244';
+
+    ctx.strokeStyle = flicker ? 'rgba(255,200,200,0.75)' : accentColor + '66';
+    ctx.lineWidth   = 10;
+    ctx.beginPath(); ctx.arc(x, y, RADIUS + 14, 0, Math.PI * 2); ctx.stroke();
+
+    if (phase >= 2) {
+      const pulse = 0.35 + 0.2 * Math.sin(t / 190);
+      ctx.strokeStyle = `rgba(255,130,0,${pulse})`;
+      ctx.lineWidth   = 4;
+      ctx.beginPath(); ctx.arc(x, y, RADIUS + 26, 0, Math.PI * 2); ctx.stroke();
+    }
+
+    ctx.fillStyle = flicker ? '#cc2200' : bodyColor;
+    ctx.beginPath(); ctx.arc(x, y, RADIUS, 0, Math.PI * 2); ctx.fill();
+
+    ctx.strokeStyle = flicker ? 'rgba(255,255,255,0.6)' : accentColor + '99';
+    ctx.lineWidth   = 2.5;
+    ctx.beginPath(); ctx.arc(x, y, RADIUS * 0.58, 0, Math.PI * 2); ctx.stroke();
+
+    ctx.strokeStyle = accentColor + '55';
+    ctx.lineWidth   = 1.5;
+    for (let i = 0; i < 6; i++) {
+      const a = angle + (i * Math.PI) / 3;
       ctx.beginPath();
-      ctx.arc(g.x, g.y, g.typeIdx === 3 ? 38 : 13, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = 'rgba(0,0,0,0.4)';
-      ctx.lineWidth   = 1.5;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * RADIUS * 0.52, y + Math.sin(a) * RADIUS * 0.52);
       ctx.stroke();
+    }
+
+    ctx.fillStyle = flicker ? '#ffffff' : '#ffbbbb';
+    ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#330000';
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+
+    // Health bar
+    const barW = 96, barH = 9;
+    const barX = x - barW / 2;
+    const barY = y - RADIUS - 24;
+    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+    ctx.beginPath(); ctx.roundRect(barX - 2, barY - 2, barW + 4, barH + 4, 3); ctx.fill();
+    ctx.fillStyle = hpPct > 0.60 ? '#e03030' : hpPct > 0.35 ? '#e07020' : '#ff2020';
+    ctx.beginPath(); ctx.roundRect(barX, barY, barW * hpPct, barH, 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1;
+    for (const m of [0.60, 0.35]) {
+      const mx = barX + barW * m;
+      ctx.beginPath(); ctx.moveTo(mx, barY - 1); ctx.lineTo(mx, barY + barH + 1); ctx.stroke();
+    }
+    ctx.fillStyle = '#ff8888';
+    ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText(`BOSS  •  Phase ${phase}`, x, barY - 3);
+  }
+
+  /** Draw ghost projectiles on the client (host-local player attacks + enemies). */
+  _drawGhostProjectiles(ctx) {
+    // Player projectiles
+    for (const [x, y, vx, vy, color] of this._ghostProjPl) {
+      const tx = x - (vx / 420) * 14;
+      const ty = y - (vy / 420) * 14;
+      ctx.fillStyle = color + '55';
+      ctx.beginPath(); ctx.arc(tx, ty, 3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Sword swings
+    for (const [ox, oy, dirX, dirY, progress, color] of this._ghostProjSw) {
+      const baseAngle = Math.atan2(dirY, dirX);
+      const half      = Math.PI * 0.39;   // arcAngle/2 = 0.78π/2
+      const sweepEnd  = baseAngle - half + Math.PI * 0.78 * progress;
+      ctx.save();
+      ctx.globalAlpha = 0.75 * (1 - progress * 0.6);
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 8;
+      ctx.lineCap     = 'round';
+      ctx.beginPath(); ctx.arc(ox, oy, 52, baseAngle - half, sweepEnd); ctx.stroke();
       ctx.restore();
     }
+
+    // Enemy projectiles
+    for (const [x, y, vx, vy] of this._ghostProjEp) {
+      const speed = Math.hypot(vx, vy) || 1;
+      const tx    = x - (vx / speed) * 18;
+      const ty    = y - (vy / speed) * 18;
+
+      const grad = ctx.createLinearGradient(tx, ty, x, y);
+      grad.addColorStop(0, 'rgba(255,140,0,0)');
+      grad.addColorStop(1, 'rgba(255,140,0,0.45)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth   = 9.8;
+      ctx.lineCap     = 'round';
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+
+      const pulse = 0.35 + 0.15 * Math.sin(Date.now() / 120);
+      ctx.strokeStyle = `rgba(255,160,0,${pulse})`;
+      ctx.lineWidth   = 3;
+      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.stroke();
+      ctx.fillStyle = '#ffb833';
+      ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff8e0';
+      ctx.beginPath(); ctx.arc(x, y, 3.15, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.lineCap = 'butt';
   }
 
   _drawDisconnect(ctx) {
