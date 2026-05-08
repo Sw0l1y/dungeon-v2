@@ -14,8 +14,8 @@ function _copyToClipboard(text) {
   ta.remove();
 }
 
-const COLORS      = ['#8cf3ff', '#ff8c42', '#a8ff78', '#ff6b9d', '#c77dff', '#ffd166'];
-const COLOR_NAMES = ['Cyan',    'Orange',  'Green',   'Pink',    'Purple',  'Gold'   ];
+const COLORS      = ['#8cf3ff', '#ff8c42', '#a8ff78', '#ff6b9d', '#c77dff', '#ffd166', '#ff3a4a', '#4488ff', '#44eebb', '#eeeeee'];
+const COLOR_NAMES = ['Cyan',    'Orange',  'Green',   'Pink',    'Purple',  'Gold',    'Red',     'Blue',    'Teal',    'White'  ];
 const MAX_NAME    = 12;
 const MAX_LOCAL   = 2;   // max local (non-remote) players per device
 const MAX_PLAYERS = 4;   // total player cap across all devices
@@ -310,10 +310,10 @@ export class OnlineLobbyScene extends Scene {
   }
 
   _colorSwatch(card, ci) {
-    const sw = 28, sh = 28, gap = 6, cols = 3;
+    const sw = 28, sh = 28, gap = 6, cols = 5;
     const gridW = cols * sw + (cols - 1) * gap;
     const gx = card.x + (card.w - gridW) / 2;
-    const gy = card.y + 110;
+    const gy = card.y + 108;
     return {
       x: gx + (ci % cols) * (sw + gap),
       y: gy + Math.floor(ci / cols) * (sh + gap),
@@ -972,7 +972,7 @@ export class OnlineLobbyScene extends Scene {
       ctx.fillStyle = 'rgba(255,255,255,0.28)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText('COLOR', x + 14, y + 100);
+      ctx.fillText('COLOR', x + 14, y + 97);
       for (let ci = 0; ci < COLORS.length; ci++) {
         const s     = this._colorSwatch(card, ci);
         const sel   = slot.colorIdx === ci;
@@ -998,7 +998,7 @@ export class OnlineLobbyScene extends Scene {
       ctx.fillStyle = 'rgba(255,255,255,0.32)';
       ctx.font = '10px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(COLOR_NAMES[slot.colorIdx], x + w / 2, y + 182);
+      ctx.fillText(COLOR_NAMES[slot.colorIdx], x + w / 2, y + 180);
     } else {
       // Read-only display
       ctx.fillStyle = color;
