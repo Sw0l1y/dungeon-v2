@@ -29,6 +29,9 @@ export class Player {
     this._dashTrail = [];
     // Archer / rogue targeting
     this._aimTarget = null;
+    // Knockback impulse (set externally, decays each frame)
+    this._knockbackVx = 0;
+    this._knockbackVy = 0;
     // Downed / revive state
     this._downed = false;
     // Spawn-in scale (0 → 1 during intro portal; 1 = normal)
@@ -91,6 +94,23 @@ export class Player {
     this._iframes     = Math.max(0, this._iframes - dt);
     this._atkCooldown = Math.max(0, this._atkCooldown - dt);
 
+    // Knockback — decelerates at 1600 px/s²
+    if (this._knockbackVx !== 0 || this._knockbackVy !== 0) {
+      const kx = this.x + this._knockbackVx * dt;
+      const ky = this.y + this._knockbackVy * dt;
+      if (!this._collidesAt(kx, this.y)) this.x = kx; else this._knockbackVx = 0;
+      if (!this._collidesAt(this.x, ky)) this.y = ky; else this._knockbackVy = 0;
+      const mag   = Math.hypot(this._knockbackVx, this._knockbackVy);
+      const slow  = Math.min(mag, 1600 * dt);
+      if (mag > 0) {
+        this._knockbackVx -= (this._knockbackVx / mag) * slow;
+        this._knockbackVy -= (this._knockbackVy / mag) * slow;
+      }
+      if (Math.hypot(this._knockbackVx, this._knockbackVy) < 3) {
+        this._knockbackVx = 0; this._knockbackVy = 0;
+      }
+    }
+
     // Rogue dash movement & hit detection
     if (this._dashing) {
       const dashSpeed = 1400;
@@ -104,7 +124,7 @@ export class Player {
       for (const e of [...this.level.entities]) {
         if (!e.isEnemy || !e.alive || this._dashHit.has(e)) continue;
         if (Math.hypot(e.x - this.x, e.y - this.y) < this.radius + e.radius + 2) {
-          e.takeDamage(50, this);
+          e.takeDamage(50, this, 'melee');
           this._dashHit.add(e);
         }
       }

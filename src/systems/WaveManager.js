@@ -2,6 +2,8 @@ import { Enemy    } from '../entities/Enemy.js';
 import { Sprinter } from '../entities/Sprinter.js';
 import { Ranger   } from '../entities/Ranger.js';
 import { Boss     } from '../entities/Boss.js';
+import { Pulsar   } from '../entities/Pulsar.js';
+import { Relay    } from '../entities/Relay.js';
 
 export class WaveManager {
   constructor(level) {
@@ -42,6 +44,7 @@ export class WaveManager {
     const basics    = 2 + this.wave;
     const sprinters = Math.max(0, this.wave - 1);
     const rangers   = Math.max(0, this.wave - 2);
+    const pairs     = this.wave >= 3 ? 1 : 0; // one Pulsar+Relay pair from wave 3
 
     const spawn = (Type) => {
       const { x, y } = spots[Math.floor(Math.random() * spots.length)];
@@ -51,9 +54,24 @@ export class WaveManager {
       this._enemies.push(e);
     };
 
+    const spawnPair = () => {
+      const s1 = spots[Math.floor(Math.random() * spots.length)];
+      const s2 = spots[Math.floor(Math.random() * spots.length)];
+      const relay  = new Relay(this.level, s2.x, s2.y);
+      const pulsar = new Pulsar(this.level, s1.x, s1.y, relay);
+      relay.pulsar = pulsar;
+      relay._netId  = ++this._netIdSeq;
+      pulsar._netId = ++this._netIdSeq;
+      this.level.addEntity(relay);
+      this.level.addEntity(pulsar);
+      this._enemies.push(relay);
+      this._enemies.push(pulsar);
+    };
+
     for (let i = 0; i < basics;    i++) spawn(Enemy);
     for (let i = 0; i < sprinters; i++) spawn(Sprinter);
     for (let i = 0; i < rangers;   i++) spawn(Ranger);
+    for (let i = 0; i < pairs;     i++) spawnPair();
   }
 
   update(dt) {

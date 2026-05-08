@@ -587,8 +587,8 @@ export class GameScene extends Scene {
       // Expose ghost positions as lightweight aim proxies so Player._nearestEnemy()
       // produces correct auto-aim directions on the client (enemies aren't in
       // level.entities on the client, so without this the facing is always null).
-      const RADIUS_BY_TYPE = [12, 9, 13, 38];
-      const SPEED_BY_TYPE  = [75, 210, 55, 60];
+      const RADIUS_BY_TYPE = [12, 9, 13, 38, 14, 8];
+      const SPEED_BY_TYPE  = [75, 238, 55, 60, 50, 115];
       this.level.ghostEntities = Array.from(this._ghosts.values()).map(g => ({
         isEnemy: true,
         alive:   true,
@@ -670,6 +670,8 @@ export class GameScene extends Scene {
         case 1: this._drawGhostSprinter(ctx, g); break;
         case 2: this._drawGhostRanger(ctx, g);   break;
         case 3: this._drawGhostBoss(ctx, g);     break;
+        case 4: this._drawGhostPulsar(ctx, g);   break;
+        case 5: this._drawGhostRelay(ctx, g);    break;
       }
     }
   }
@@ -776,6 +778,46 @@ export class GameScene extends Scene {
     ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     ctx.fillText(`BOSS  •  Phase ${phase}`, x, barY - 3);
+  }
+
+  _drawGhostPulsar(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    const COLOR = '#22ff55';
+    ctx.save();
+    ctx.globalAlpha = 0.20;
+    ctx.fillStyle   = COLOR;
+    ctx.beginPath(); ctx.arc(x, y, 21, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    // Shield ring
+    ctx.strokeStyle = 'rgba(34,255,85,0.5)';
+    ctx.lineWidth   = 4;
+    ctx.beginPath(); ctx.arc(x, y, 23, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = COLOR;
+    ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle   = '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    this._drawGhostHealthBar(ctx, x, y, -24, 28, 3, hpPct);
+  }
+
+  _drawGhostRelay(ctx, g) {
+    const { x, y, hpPct = 1 } = g;
+    const COLOR = '#22ff55';
+    ctx.save();
+    ctx.globalAlpha = 0.18;
+    ctx.fillStyle   = COLOR;
+    ctx.beginPath(); ctx.arc(x, y, 12, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = COLOR;
+    ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle   = '#ffffff';
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    this._drawGhostHealthBar(ctx, x, y, -17, 20, 3, hpPct);
   }
 
   /** Draw ghost projectiles on the client (host-local player attacks + enemies). */

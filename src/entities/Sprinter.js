@@ -6,15 +6,15 @@ export class Sprinter {
     this.x        = x;
     this.y        = y;
     this.radius   = 9;
-    this.speed    = 210;
-    this.maxHp    = 35;
-    this.hp       = 35;
+    this.speed    = 238;
+    this.maxHp    = 50;
+    this.hp       = 50;
     this.alive     = true;
     this.isEnemy   = true;
     this.isSprinter = true;
     this._typeIdx  = 1;   // for net serialization: 1=Sprinter
     this._netId    = 0;
-    this.damage    = 15;
+    this.damage    = 18;
     this._hitCooldown = 0;
     this._path        = [];
     this._pathTimer   = 0;

@@ -26,7 +26,7 @@ export class Projectile {
     for (const e of [...this.level.entities]) {
       if (!e.isEnemy || !e.alive) continue;
       if (Math.hypot(this.x - e.x, this.y - e.y) < this.radius + e.radius) {
-        e.takeDamage(30, this.owner);
+        e.takeDamage(30, this.owner, 'ranged');
         this.level.removeEntity(this);
         return;
       }
