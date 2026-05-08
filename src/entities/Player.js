@@ -12,9 +12,9 @@ export class Player {
     this.x = x;
     this.y = y;
     this.radius = 12;
-    this.speed  = 180;
-    this.maxHp  = 100;
-    this.hp     = 100;
+    this.speed  = classId === 'sword' ? 205 : 180;
+    this.maxHp  = classId === 'sword' ? 180 : 100;
+    this.hp     = this.maxHp;
     this.alive  = true;
     this._facingX    = 0;
     this._facingY    = 1;
@@ -43,7 +43,7 @@ export class Player {
     const dealt = Math.min(amount, this.hp);
     this.hp = Math.max(0, this.hp - amount);
     this.dmgTaken += dealt;
-    this._iframes = 0.6;
+    this._iframes = this.classId === 'sword' ? 0.80 : 0.60;
     if (this.hp === 0) {
       this.alive   = false;
       this._downed = true;
@@ -127,7 +127,7 @@ export class Player {
 
   _attack() {
     if (this.classId === 'sword') {
-      this._atkCooldown = 0.45;
+      this._atkCooldown = 0.38;
       this.level.addEntity(
         new SwordSwing(this.level, this.x, this.y, this._facingX, this._facingY, this)
       );
