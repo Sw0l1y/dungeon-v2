@@ -475,6 +475,13 @@ export class GameScene extends Scene {
         // Movement axes so client can extrapolate host-player positions between snaps
         ax: +(pl.binding?.axes?.x ?? 0).toFixed(3),
         ay: +(pl.binding?.axes?.y ?? 0).toFixed(3),
+        // Rogue trail sync — omitted when empty to save bandwidth
+        dt: pl._dashTrail?.length
+          ? pl._dashTrail.map(t => [Math.round(t.x), Math.round(t.y), +t.a.toFixed(2)])
+          : undefined,
+        rt: pl._ricochetTrail?.length
+          ? pl._ricochetTrail.map(s => [Math.round(s.x0), Math.round(s.y0), Math.round(s.x1), Math.round(s.y1), +s.delay.toFixed(3), +s.a.toFixed(2)])
+          : undefined,
       })),
       // Enemies: full [netId, typeIdx, x, y, hpPct0-255] OR compact [netId] (alive, pos unchanged).
       // Compact entries save bandwidth when enemies are stationary; client keeps last known pos.
@@ -585,28 +592,44 @@ export class GameScene extends Scene {
         const pl = ps[i];
         if (!pl) return;
 
-        // Snap position and facing for every player (correction for client players,
-        // authoritative feed for host players)
-        pl.x = pd.x;
-        pl.y = pd.y;
         pl._facingX = pd.fx ?? pl._facingX;
         pl._facingY = pd.fy ?? pl._facingY;
 
-        // Push movement axes into the RemoteBinding for every player that is NOT
-        // locally controlled on this device.  This smoothly extrapolates positions
-        // between 20 hz state packets instead of freezing them.
-        // Locally-controlled players already move via their real InputBinding, so
-        // we skip them to avoid overriding live input.
-        // Use applyRemote() — axes is a getter-only property, direct assignment
-        // throws in strict-mode ES modules and silently kills this whole handler.
-        if (!this._localPlayerIdxSet.has(i) && pd.ax !== undefined) {
-          pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
+        // Position authority:
+        //   Local players  → hard snap (server correction keeps them honest)
+        //   Remote players → axes-driven movement at full frame rate; only snap
+        //                    when error exceeds 80px (wall clip, teleport, etc.)
+        //                    This eliminates the 20hz jitter on opponent screens.
+        const isRemote = !this._localPlayerIdxSet.has(i) && this._localPlayerIdxSet.size > 0;
+        if (isRemote) {
+          const err = Math.hypot(pd.x - pl.x, pd.y - pl.y);
+          if (err > 80) { pl.x = pd.x; pl.y = pd.y; }
+          // Push axes so player.update() extrapolates at 60fps between 20hz packets
+          if (pd.ax !== undefined) {
+            pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
+          }
+        } else {
+          pl.x = pd.x;
+          pl.y = pd.y;
         }
 
         // Authoritative HP + downed state for all players
         pl.hp = Math.max(0, pd.hp);
         if (pd.d && !pl._downed) { pl._downed = true;  pl.alive = false; }
         if (!pd.d && pl._downed) { pl._downed = false; pl.alive = true;  }
+
+        // Rogue trail sync — apply received trail arrays so the visual plays on both screens
+        if (pd.dt !== undefined) {
+          pl._dashTrail = pd.dt.map(([x, y, a]) => ({ x, y, a }));
+        } else if (!isRemote) {
+          // no trail data in packet means it's empty on host — clear it
+          if (pl._dashTrail?.length) pl._dashTrail = [];
+        }
+        if (pd.rt !== undefined) {
+          pl._ricochetTrail = pd.rt.map(([x0, y0, x1, y1, delay, a]) => ({ x0, y0, x1, y1, delay, a }));
+        } else if (!isRemote) {
+          if (pl._ricochetTrail?.length) pl._ricochetTrail = [];
+        }
       });
     }
 
