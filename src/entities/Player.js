@@ -311,7 +311,10 @@ export class Player {
   _canRicochetKill(e) {
     if (!e?.isEnemy || !e.alive) return false;
     if (e.isBoss || e.isElite || e.instantKillImmune) return false;
-    return e.constructor?.name !== 'Pulsar';
+    // Pulsar is only off-limits while its relay is alive (melee triggers the blast).
+    // Once the relay is dead the shield drops and the dash can instakill it normally.
+    if (e.constructor?.name === 'Pulsar') return !e._shielded;
+    return true;
   }
 
   _homingVolley() {
