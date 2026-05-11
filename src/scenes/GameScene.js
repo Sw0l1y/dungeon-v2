@@ -156,29 +156,32 @@ export class GameScene extends Scene {
 
     // ── Client-side movement smoothing (all remote entities) ─────────────────
     if (this._netRole === 'client') {
-      const smooth = 1 - Math.exp(-14 * dt);
+      // Rate 22 ≈ 97% of the way to target within 150 ms — fast enough to feel
+      // responsive but slow enough to swallow 20hz packet gaps without hopping.
+      const smooth = 1 - Math.exp(-22 * dt);
 
-      // Remote players — lerp toward server target position
+      // Remote players — axes are zeroed in _applyHostState so physics won't
+      // fight the lerp; we are the sole driver of position here.
       if (this._localPlayerIdxSet.size > 0) {
         for (let i = 0; i < this.level.players.length; i++) {
           if (this._localPlayerIdxSet.has(i)) continue;
           const pl = this.level.players[i];
           if (pl._remoteX === undefined) continue;
           const err = Math.hypot(pl._remoteX - pl.x, pl._remoteY - pl.y);
-          if (err > 120) { pl.x = pl._remoteX; pl.y = pl._remoteY; }
+          if (err > 200) { pl.x = pl._remoteX; pl.y = pl._remoteY; }
           else { pl.x += (pl._remoteX - pl.x) * smooth; pl.y += (pl._remoteY - pl.y) * smooth; }
         }
       }
 
-      // Ghost enemies — lerp a separate render position (g.sx/sy) toward the
-      // interpolated snapshot target so positional corrections glide in.
+      // Ghost enemies — lerp render pos (g.sx/sy) toward the latest authoritative
+      // position (g.x/g.y) directly.  Using the snapshot-interpolated target added
+      // an 80ms compounded delay that amplified jitter; direct lerp is smoother.
       for (const g of this._ghosts.values()) {
-        const { x: ix, y: iy } = this._ghostInterp(g);
-        if (g.sx === undefined) { g.sx = ix; g.sy = iy; }
+        if (g.sx === undefined) { g.sx = g.x; g.sy = g.y; }
         else {
-          const err = Math.hypot(ix - g.sx, iy - g.sy);
-          if (err > 120) { g.sx = ix; g.sy = iy; }
-          else { g.sx += (ix - g.sx) * smooth; g.sy += (iy - g.sy) * smooth; }
+          const err = Math.hypot(g.x - g.sx, g.y - g.sy);
+          if (err > 200) { g.sx = g.x; g.sy = g.y; }
+          else { g.sx += (g.x - g.sx) * smooth; g.sy += (g.y - g.sy) * smooth; }
         }
       }
 
@@ -648,13 +651,12 @@ export class GameScene extends Scene {
         //                    This eliminates the 20hz jitter on opponent screens.
         const isRemote = !this._localPlayerIdxSet.has(i) && this._localPlayerIdxSet.size > 0;
         if (isRemote) {
-          // Store authoritative target — the update() loop lerps toward it each frame
+          // Store authoritative target — the update() loop lerps toward it each frame.
+          // Zero out movement axes so player.update() physics doesn't fight the lerp
+          // (facing is already handled via pd.fx/fy above).
           pl._remoteX = pd.x;
           pl._remoteY = pd.y;
-          // Keep axes so player.update() provides physically-plausible extrapolation
-          if (pd.ax !== undefined) {
-            pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
-          }
+          pl.binding.applyRemote?.({ x: 0, y: 0, ak: 0, it: 0 });
         } else {
           pl.x = pd.x;
           pl.y = pd.y;
