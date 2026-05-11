@@ -658,8 +658,12 @@ export class GameScene extends Scene {
           pl._remoteY = pd.y;
           pl.binding.applyRemote?.({ x: 0, y: 0, ak: 0, it: 0 });
         } else {
-          pl.x = pd.x;
-          pl.y = pd.y;
+          // Local player — client-side prediction.
+          // The client's own physics runs at 60 fps from real keyboard input.
+          // Only snap if the host disagrees by more than 60 px (wall correction,
+          // teleport, etc.).  This eliminates the 20 hz hard-snap jumpiness.
+          const err = Math.hypot(pd.x - pl.x, pd.y - pl.y);
+          if (err > 60) { pl.x = pd.x; pl.y = pd.y; }
         }
 
         // Authoritative HP + downed state for all players
