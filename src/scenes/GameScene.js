@@ -36,6 +36,10 @@ export class GameScene extends Scene {
     this._ghostProjPl = [];
     this._ghostProjSw = [];
     this._ghostProjEp = [];
+    // Persistent smooth projectile lists — positions are advanced by velocity each frame
+    // so they glide at 60fps rather than snapping every 20hz packet.
+    this._smoothProjPl = [];   // { x,y,vx,vy,color,stale }
+    this._smoothProjEp = [];   // { x,y,vx,vy,stale }
     // Authoritative wave state received from host (used for client HUD)
     this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
     // Send-rate timers
@@ -150,24 +154,40 @@ export class GameScene extends Scene {
 
     this.level.update(dt);
 
-    // Smooth remote player positions toward their server-authoritative targets.
-    // Exponential lerp at rate 14 converges ~50% per packet window (50ms) without
-    // any visible snap. Large errors (teleport / wall correction) still snap instantly.
-    if (this._netRole === 'client' && this._localPlayerIdxSet.size > 0) {
+    // ── Client-side movement smoothing (all remote entities) ─────────────────
+    if (this._netRole === 'client') {
       const smooth = 1 - Math.exp(-14 * dt);
-      for (let i = 0; i < this.level.players.length; i++) {
-        if (this._localPlayerIdxSet.has(i)) continue;
-        const pl = this.level.players[i];
-        if (pl._remoteX === undefined) continue;
-        const err = Math.hypot(pl._remoteX - pl.x, pl._remoteY - pl.y);
-        if (err > 120) {
-          pl.x = pl._remoteX;   // teleport snap for large desyncs
-          pl.y = pl._remoteY;
-        } else {
-          pl.x += (pl._remoteX - pl.x) * smooth;
-          pl.y += (pl._remoteY - pl.y) * smooth;
+
+      // Remote players — lerp toward server target position
+      if (this._localPlayerIdxSet.size > 0) {
+        for (let i = 0; i < this.level.players.length; i++) {
+          if (this._localPlayerIdxSet.has(i)) continue;
+          const pl = this.level.players[i];
+          if (pl._remoteX === undefined) continue;
+          const err = Math.hypot(pl._remoteX - pl.x, pl._remoteY - pl.y);
+          if (err > 120) { pl.x = pl._remoteX; pl.y = pl._remoteY; }
+          else { pl.x += (pl._remoteX - pl.x) * smooth; pl.y += (pl._remoteY - pl.y) * smooth; }
         }
       }
+
+      // Ghost enemies — lerp a separate render position (g.sx/sy) toward the
+      // interpolated snapshot target so positional corrections glide in.
+      for (const g of this._ghosts.values()) {
+        const { x: ix, y: iy } = this._ghostInterp(g);
+        if (g.sx === undefined) { g.sx = ix; g.sy = iy; }
+        else {
+          const err = Math.hypot(ix - g.sx, iy - g.sy);
+          if (err > 120) { g.sx = ix; g.sy = iy; }
+          else { g.sx += (ix - g.sx) * smooth; g.sy += (iy - g.sy) * smooth; }
+        }
+      }
+
+      // Smooth projectiles — advance by velocity each frame (60fps glide),
+      // expire entries that weren't refreshed in the last two packet windows.
+      for (const sp of this._smoothProjPl) { sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.stale += dt; }
+      for (const sp of this._smoothProjEp) { sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.stale += dt; }
+      this._smoothProjPl = this._smoothProjPl.filter(sp => sp.stale < 0.12);
+      this._smoothProjEp = this._smoothProjEp.filter(sp => sp.stale < 0.12);
     }
 
     // Wave manager: only the host (or solo player) runs waves / spawns enemies
@@ -705,12 +725,39 @@ export class GameScene extends Scene {
       }));
     }
 
-    // Ghost projectiles — stamp arrival time for velocity extrapolation
+    // Ghost projectiles — merge into persistent smooth lists so positions glide
     if (state.proj) {
-      this._ghostProjPl = state.proj.pl ?? [];
-      this._ghostProjSw = state.proj.sw ?? [];
-      this._ghostProjEp = state.proj.ep ?? [];
-      this._ghostProjPacketTime = performance.now();
+      this._ghostProjSw = state.proj.sw ?? [];   // sword swings: short-lived, no smooth needed
+
+      // Helper: match received entry to closest existing smooth entry (by color + proximity),
+      // lerp its position 35% toward authoritative, reset stale timer; create new if unmatched.
+      const mergeProj = (received, smoothList, useColor) => {
+        const MATCH_D = 90, LERP = 0.35;
+        const matched = new Set();
+        for (const entry of received) {
+          const [rx, ry, rvx, rvy, color] = entry;
+          let best = null, bestD = MATCH_D;
+          for (const sp of smoothList) {
+            if (useColor && sp.color !== color) continue;
+            const d = Math.hypot(rx - sp.x, ry - sp.y);
+            if (d < bestD && !matched.has(sp)) { bestD = d; best = sp; }
+          }
+          if (best) {
+            best.x  += (rx - best.x) * LERP;
+            best.y  += (ry - best.y) * LERP;
+            best.vx  = rvx; best.vy = rvy;
+            best.stale = 0;
+            matched.add(best);
+          } else {
+            const sp = { x: rx, y: ry, vx: rvx, vy: rvy, stale: 0 };
+            if (useColor) sp.color = color;
+            smoothList.push(sp);
+          }
+        }
+      };
+
+      mergeProj(state.proj.pl ?? [], this._smoothProjPl, true);
+      mergeProj(state.proj.ep ?? [], this._smoothProjEp, false);
     }
 
     // FX events: spawn death particles on client's level for visual parity
@@ -818,8 +865,9 @@ export class GameScene extends Scene {
   /** Draw ghost enemies on the client, matching each type's actual visuals. */
   _drawGhosts(ctx) {
     for (const g of this._ghosts.values()) {
-      // Use interpolated position so remote enemies glide smoothly between 20 hz snapshots
-      const { x, y } = this._ghostInterp(g);
+      // Use lerp-smoothed render position (g.sx/sy updated in update())
+      // Falls back to interpolated value on first frame before update() ran.
+      const x = g.sx ?? g.x, y = g.sy ?? g.y;
       const gv = { ...g, x, y };
       switch (gv.typeIdx) {
         case 0: this._drawGhostEnemy(ctx, gv);    break;
@@ -1055,27 +1103,22 @@ export class GameScene extends Scene {
 
   /** Draw ghost projectiles on the client (host-local player attacks + enemies). */
   _drawGhostProjectiles(ctx) {
-    // Time elapsed since last state packet — used to extrapolate positions at 60fps
-    // rather than snapping every 50ms. Cap prevents runaway if packets stop arriving.
-    const extrapolDt = Math.min((performance.now() - this._ghostProjPacketTime) / 1000, 0.12);
+    // Smooth lists are velocity-advanced every frame in update() — no extrapolDt needed here.
 
-    // Player projectiles — velocity-extrapolated position + full arrow with synthetic trail
-    for (const [x, y, vx, vy, color] of this._ghostProjPl) {
+    // Player projectiles — full arrow + synthetic trail
+    for (const sp of this._smoothProjPl) {
+      const { x, y, vx, vy, color } = sp;
       const speed = Math.hypot(vx, vy) || 1;
       const dx = vx / speed, dy = vy / speed;
-      const px = -dy,        py = dx;
-      // Extrapolate forward from received position using known velocity
-      const ex = x + vx * extrapolDt;
-      const ey = y + vy * extrapolDt;
+      const px = -dy, py = dx;
       const TRAIL = 8, DT = 1 / 60;
       for (let i = 0; i < TRAIL; i++) {
-        const frac  = (i + 1) / (TRAIL + 1);
-        const steps = TRAIL - i;
-        const tx    = ex - dx * speed * DT * steps;
-        const ty    = ey - dy * speed * DT * steps;
+        const frac = (i + 1) / (TRAIL + 1);
+        const tx   = x - dx * speed * DT * (TRAIL - i);
+        const ty   = y - dy * speed * DT * (TRAIL - i);
         this._drawGhostArrow(ctx, tx, ty, dx, dy, px, py, frac * 0.44, color);
       }
-      this._drawGhostArrow(ctx, ex, ey, dx, dy, px, py, 1, color);
+      this._drawGhostArrow(ctx, x, y, dx, dy, px, py, 1, color);
     }
 
     // Sword swings
@@ -1092,11 +1135,10 @@ export class GameScene extends Scene {
       ctx.restore();
     }
 
-    // Enemy projectiles — also extrapolated
-    for (const [x, y, vx, vy] of this._ghostProjEp) {
+    // Enemy projectiles
+    for (const sp of this._smoothProjEp) {
+      const { x: ex, y: ey, vx, vy } = sp;
       const speed = Math.hypot(vx, vy) || 1;
-      const ex    = x + vx * extrapolDt;
-      const ey    = y + vy * extrapolDt;
       const tx    = ex - (vx / speed) * 18;
       const ty    = ey - (vy / speed) * 18;
 
