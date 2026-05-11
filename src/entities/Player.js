@@ -416,27 +416,6 @@ export class Player {
     }
   }
 
-  _drawCrosshair(ctx) {
-    const t   = this._aimTarget;
-    const r   = (t.radius ?? 12) + 10;
-    const arm = 9;
-    const pulse = 0.65 + 0.2 * Math.sin(Date.now() / 220);
-    ctx.save();
-    ctx.strokeStyle = this.color;
-    ctx.lineWidth   = 1.5;
-    ctx.globalAlpha = pulse;
-    // Ring around target
-    ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.stroke();
-    // 4 tick marks radiating outward
-    ctx.beginPath();
-    ctx.moveTo(t.x - r - arm, t.y); ctx.lineTo(t.x - r, t.y);
-    ctx.moveTo(t.x + r,       t.y); ctx.lineTo(t.x + r + arm, t.y);
-    ctx.moveTo(t.x, t.y - r - arm); ctx.lineTo(t.x, t.y - r);
-    ctx.moveTo(t.x, t.y + r);       ctx.lineTo(t.x, t.y + r + arm);
-    ctx.stroke();
-    ctx.restore();
-  }
-
   _nearestEnemy() {
     // Strict LoS-first: only lock onto enemies with a clear sightline.
     // If no LoS target exists, return null → crosshair hidden, free aim.
@@ -454,7 +433,14 @@ export class Player {
     for (const e of candidates) {
       if (!e.isEnemy || !e.alive) continue;
       if (!this._hasLos(e)) continue;            // hard LoS gate — walls block entirely
-      const score = Math.hypot(e.x - this.x, e.y - this.y) / (e.speed || 75);
+      const edx = e.x - this.x, edy = e.y - this.y;
+      const elen = Math.hypot(edx, edy) || 1;
+      // Dot product: 1 = directly ahead, -1 = directly behind.
+      // Bias multiplier: enemies in front of the player score 40% lower (preferred),
+      // enemies behind score up to 40% higher.  Pure distance still dominates at range.
+      const dot = (edx / elen) * this._facingX + (edy / elen) * this._facingY;
+      const facingBias = 1.0 - 0.4 * dot;
+      const score = (elen / (e.speed || 75)) * facingBias;
       if (score < bestScore) { bestScore = score; bestTarget = e; }
     }
 
@@ -587,24 +573,40 @@ export class Player {
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Facing dot
-    const dotDist = this.radius + 5;
-    const len = Math.hypot(this._facingX, this._facingY) || 1;
-    const fx = (this._facingX / len) * dotDist;
-    const fy = (this._facingY / len) * dotDist;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    // Facing arrow — player-colored, replaces the old black dot
+    const flen = Math.hypot(this._facingX, this._facingY) || 1;
+    const fdx = this._facingX / flen, fdy = this._facingY / flen;
+    // perpendicular for arrowhead wings
+    const fpx = -fdy, fpy = fdx;
+    const arBase = this.radius + 5;
+    const arTip  = this.radius + 17;
+    const wingW  = 5;
+    const bx = this.x + fdx * arBase, by = this.y + fdy * arBase;
+    const tx = this.x + fdx * arTip,  ty = this.y + fdy * arTip;
+    // soft outer glow
+    ctx.globalAlpha = 0.22;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth   = 5;
+    ctx.lineCap     = 'round';
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+    // solid shaft
+    ctx.globalAlpha = 0.80;
+    ctx.lineWidth   = 1.8;
+    ctx.beginPath(); ctx.moveTo(bx, by); ctx.lineTo(tx, ty); ctx.stroke();
+    // arrowhead
+    ctx.globalAlpha = 0.90;
+    ctx.lineWidth   = 1.5;
     ctx.beginPath();
-    ctx.arc(this.x + fx, this.y + fy, 4, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.moveTo(tx + fpx * wingW - fdx * wingW, ty + fpy * wingW - fdy * wingW);
+    ctx.lineTo(tx, ty);
+    ctx.lineTo(tx - fpx * wingW - fdx * wingW, ty - fpy * wingW - fdy * wingW);
+    ctx.stroke();
+    ctx.lineCap     = 'butt';
+    ctx.globalAlpha = 1;
 
     ctx.restore();
 
     if (this._lunging) this._drawLungeArc(ctx);
-
-    // Crosshair over aim target (archer + rogue + sword)
-    if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') && this._aimTarget?.alive) {
-      this._drawCrosshair(ctx);
-    }
 
     // Health bar
     const barW = 30, barH = 4;
