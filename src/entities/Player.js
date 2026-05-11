@@ -608,6 +608,11 @@ export class Player {
 
     if (this._lunging) this._drawLungeArc(ctx);
 
+    // Crosshair over aim target (archer + rogue + sword)
+    if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') && this._aimTarget?.alive) {
+      this._drawCrosshair(ctx);
+    }
+
     // Health bar
     const barW = 30, barH = 4;
     const barX = this.x - barW / 2;
@@ -643,6 +648,25 @@ export class Player {
     ctx.fillText(this.name, this.x, tagY);
 
     if (scaled) ctx.restore();
+  }
+
+  _drawCrosshair(ctx) {
+    const t   = this._aimTarget;
+    const r   = (t.radius ?? 12) + 10;
+    const arm = 9;
+    const pulse = 0.65 + 0.2 * Math.sin(Date.now() / 220);
+    ctx.save();
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth   = 1.5;
+    ctx.globalAlpha = pulse;
+    ctx.beginPath(); ctx.arc(t.x, t.y, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(t.x - r - arm, t.y); ctx.lineTo(t.x - r, t.y);
+    ctx.moveTo(t.x + r,       t.y); ctx.lineTo(t.x + r + arm, t.y);
+    ctx.moveTo(t.x, t.y - r - arm); ctx.lineTo(t.x, t.y - r);
+    ctx.moveTo(t.x, t.y + r);       ctx.lineTo(t.x, t.y + r + arm);
+    ctx.stroke();
+    ctx.restore();
   }
 
   _drawLungeArc(ctx) {

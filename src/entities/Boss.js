@@ -72,7 +72,11 @@ export class Boss {
     this._vulnerable = false;
 
     // Contact damage
-    this._hitCooldown = 0;
+    this._hitCooldown    = 0;
+    // How long since the boss last landed a hit on a player.
+    // Used to throttle the destructive lunge so the boss can't
+    // spam wall-smashing while the player stays out of reach.
+    this._noDamageTimer  = 0;
   }
 
   // ── phase helper ───────────────────────────────────────────────────────────
@@ -110,13 +114,15 @@ export class Boss {
     if (!this.alive) return;
 
     // Contact damage
-    this._hitCooldown = Math.max(0, this._hitCooldown - dt);
+    this._hitCooldown    = Math.max(0, this._hitCooldown - dt);
+    this._noDamageTimer += dt;
     if (this._hitCooldown === 0) {
       for (const p of this.level.players) {
         if (!p.alive) continue;
         if (Math.hypot(p.x - this.x, p.y - this.y) < this.radius + p.radius + 4) {
           p.takeDamage(this.damage);
-          this._hitCooldown = 1.2;
+          this._hitCooldown   = 1.2;
+          this._noDamageTimer = 0;   // reset — boss just landed a hit
           break;
         }
       }
@@ -220,14 +226,21 @@ export class Boss {
     this._vulnerable = this._p3State === 'pause';
 
     if (this._p3State === 'idle' && this._p3Timer <= 0) {
-      this._p3Target = this._nearestPlayer();
-      if (this._p3Target) {
-        const dx = this._p3Target.x - this.x, dy = this._p3Target.y - this.y;
-        const len = Math.hypot(dx, dy) || 1;
-        this._p3Dir = { x: dx / len, y: dy / len };
+      // If the boss hasn't landed a hit in 6 s, it isn't close enough to the
+      // player to make the destructive dash worth it — add a full extra idle
+      // cycle before committing to the lunge.
+      if (this._noDamageTimer > 6) {
+        this._p3Timer = P3T.IDLE;   // wait another idle period
+      } else {
+        this._p3Target = this._nearestPlayer();
+        if (this._p3Target) {
+          const dx = this._p3Target.x - this.x, dy = this._p3Target.y - this.y;
+          const len = Math.hypot(dx, dy) || 1;
+          this._p3Dir = { x: dx / len, y: dy / len };
+        }
+        this._p3State = 'telegraph';
+        this._p3Timer = P3T.TELEGRAPH;
       }
-      this._p3State = 'telegraph';
-      this._p3Timer = P3T.TELEGRAPH;
 
     } else if (this._p3State === 'telegraph' && this._p3Timer <= 0) {
       this._p3State = 'lunge';
