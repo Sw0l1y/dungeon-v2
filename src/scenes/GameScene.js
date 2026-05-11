@@ -150,6 +150,26 @@ export class GameScene extends Scene {
 
     this.level.update(dt);
 
+    // Smooth remote player positions toward their server-authoritative targets.
+    // Exponential lerp at rate 14 converges ~50% per packet window (50ms) without
+    // any visible snap. Large errors (teleport / wall correction) still snap instantly.
+    if (this._netRole === 'client' && this._localPlayerIdxSet.size > 0) {
+      const smooth = 1 - Math.exp(-14 * dt);
+      for (let i = 0; i < this.level.players.length; i++) {
+        if (this._localPlayerIdxSet.has(i)) continue;
+        const pl = this.level.players[i];
+        if (pl._remoteX === undefined) continue;
+        const err = Math.hypot(pl._remoteX - pl.x, pl._remoteY - pl.y);
+        if (err > 120) {
+          pl.x = pl._remoteX;   // teleport snap for large desyncs
+          pl.y = pl._remoteY;
+        } else {
+          pl.x += (pl._remoteX - pl.x) * smooth;
+          pl.y += (pl._remoteY - pl.y) * smooth;
+        }
+      }
+    }
+
     // Wave manager: only the host (or solo player) runs waves / spawns enemies
     if (this._netRole !== 'client') {
       this.waves.update(dt);
@@ -608,9 +628,10 @@ export class GameScene extends Scene {
         //                    This eliminates the 20hz jitter on opponent screens.
         const isRemote = !this._localPlayerIdxSet.has(i) && this._localPlayerIdxSet.size > 0;
         if (isRemote) {
-          const err = Math.hypot(pd.x - pl.x, pd.y - pl.y);
-          if (err > 80) { pl.x = pd.x; pl.y = pd.y; }
-          // Push axes so player.update() extrapolates at 60fps between 20hz packets
+          // Store authoritative target — the update() loop lerps toward it each frame
+          pl._remoteX = pd.x;
+          pl._remoteY = pd.y;
+          // Keep axes so player.update() provides physically-plausible extrapolation
           if (pd.ax !== undefined) {
             pl.binding.applyRemote?.({ x: pd.ax, y: pd.ay ?? 0, ak: 0, it: 0 });
           }
