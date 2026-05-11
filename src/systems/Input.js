@@ -16,7 +16,9 @@ export class Input {
       }
       if (!this._held.has(e.code)) this._justPressed.add(e.code);
       this._held.add(e.code);
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      // Ignore key-repeat events for character input — otherwise holding a key
+      // floods the name field with repeated characters.
+      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
         this._chars.push(e.key);
       }
     };

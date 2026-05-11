@@ -264,7 +264,9 @@ export class Player {
     for (const target of targets) {
       if (!target.alive) continue;
       points.push({ x: target.x, y: target.y });
-      target.takeDamage(target.hp ?? 9999, this, 'melee');
+      // Ghost entities (client-side proxies) don't have takeDamage — the host
+      // applies the actual kill when it receives the ability press in the input packet.
+      target.takeDamage?.(target.hp ?? 9999, this, 'melee');
     }
     const end = points[points.length - 1];
     this.x = end.x;
@@ -287,13 +289,15 @@ export class Player {
 
   _ricochetTargets() {
     const maxRange = Math.min(this.level.worldWidth ?? 1000, this.level.worldHeight ?? 700) * 0.55;
+    // On the client, real enemies live in ghostEntities (not level.entities).
+    const candidates = this.level.entities.length > 0
+      ? this.level.entities
+      : (this.level.ghostEntities ?? []);
     const picked = [];
-    let fromX = this.x;
-    let fromY = this.y;
+    let fromX = this.x, fromY = this.y;
     for (let i = 0; i < 3; i++) {
-      let best = null;
-      let bestScore = Infinity;
-      for (const e of this.level.entities) {
+      let best = null, bestScore = Infinity;
+      for (const e of candidates) {
         if (!this._canRicochetKill(e) || picked.includes(e)) continue;
         const d = Math.hypot(e.x - fromX, e.y - fromY);
         if (d > maxRange) continue;
@@ -311,8 +315,13 @@ export class Player {
   _canRicochetKill(e) {
     if (!e?.isEnemy || !e.alive) return false;
     if (e.isBoss || e.isElite || e.instantKillImmune) return false;
-    // Pulsar is only off-limits while its relay is alive (melee triggers the blast).
-    // Once the relay is dead the shield drops and the dash can instakill it normally.
+    // Ghost entity (client-side proxy) — identified by having typeIdx but no class name.
+    // typeIdx: 3=Boss, 4=Pulsar.  Pulsars can't be ricochet-killed client-side because
+    // their shield state isn't carried in the ghost proxy; the host handles it.
+    if (e.typeIdx !== undefined && e.constructor?.name === 'Object') {
+      return e.typeIdx !== 3 && e.typeIdx !== 4;
+    }
+    // Real entity — Pulsar only targetable when its relay is dead.
     if (e.constructor?.name === 'Pulsar') return !e._shielded;
     return true;
   }

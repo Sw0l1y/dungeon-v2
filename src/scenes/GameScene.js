@@ -63,6 +63,9 @@ export class GameScene extends Scene {
     // Client: e.g. [1] or [2,3] — used in _buildInputPacket and _applyHostState.
     this._myPlayerIdxs      = this.game.state.myPlayerIdxs ?? [];
     this._localPlayerIdxSet = new Set(this._myPlayerIdxs);
+    // Per-local-player ability latch — set when abilityA is pressed, cleared after
+    // the next input packet is sent so presses between 60hz frames aren't dropped.
+    this._abilityLatch = [];
 
     if (this._net) {
       this._net.onMessage      = (data, peerId) => this._onNetMsg(data, peerId);
@@ -152,7 +155,22 @@ export class GameScene extends Scene {
       this._updateIntroParticles(dt);
     }
 
+    // Capture ability presses BEFORE level.update so we catch the justPressed frame.
+    // The latch is consumed when the next input packet is sent (30→60 hz).
+    if (this._netRole === 'client') {
+      for (let i = 0; i < this._myPlayerIdxs.length; i++) {
+        const pl = this.level.players[this._myPlayerIdxs[i]];
+        if (pl?.binding.justPressed('abilityA')) this._abilityLatch[i] = true;
+      }
+    }
+
     this.level.update(dt);
+
+    // Flush remote bindings on the HOST after level.update so justPressed flags
+    // (including the new ability latch) are cleared for the next frame.
+    if (this._netRole === 'host') {
+      for (const rb of this._remoteBindings) rb.flush();
+    }
 
     // ── Client-side movement smoothing (all remote entities) ─────────────────
     if (this._netRole === 'client') {
@@ -267,7 +285,7 @@ export class GameScene extends Scene {
           this._net.send(this._buildStatePacket());
         }
       } else {
-        if (this._sendTimer >= 0.033) {   // 30 hz input
+        if (this._sendTimer >= 0.016) {   // ~60 hz input — matches frame rate
           this._sendTimer = 0;
           this._net.send(this._buildInputPacket());
         }
@@ -586,16 +604,18 @@ export class GameScene extends Scene {
     };
   }
 
-  /** Build input packet (client → host, 30 hz).
+  /** Build input packet (client → host, ~60 hz).
    *  Only sends inputs for this device's locally-controlled players. */
   _buildInputPacket() {
-    const snap = (pl) => {
-      if (!pl) return { x: 0, y: 0, ak: 0, it: 0 };
-      const { x, y } = pl.binding.axes;
-      return { x, y, ak: pl.binding.isHeld('attack') ? 1 : 0, it: pl.binding.isHeld('interact') ? 1 : 0 };
-    };
     const ps = this.level.players;
-    return { t: 'in', p: this._myPlayerIdxs.map(i => snap(ps[i])) };
+    const snap = (pl, localIdx) => {
+      if (!pl) return { x: 0, y: 0, ak: 0, it: 0, ab: 0 };
+      const { x, y } = pl.binding.axes;
+      const ab = this._abilityLatch[localIdx] ? 1 : 0;
+      this._abilityLatch[localIdx] = false;  // consume latch
+      return { x, y, ak: pl.binding.isHeld('attack') ? 1 : 0, it: pl.binding.isHeld('interact') ? 1 : 0, ab };
+    };
+    return { t: 'in', p: this._myPlayerIdxs.map((i, li) => snap(ps[i], li)) };
   }
 
   /** Handle an incoming network message. */
