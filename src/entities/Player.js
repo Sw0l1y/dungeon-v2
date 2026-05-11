@@ -25,6 +25,9 @@ export class Player {
     this.alive  = true;
     this._facingX    = 0;
     this._facingY    = 1;
+    // Last movement input direction — drives the facing arrow independently of auto-aim
+    this._moveDirX   = 0;
+    this._moveDirY   = 1;
     this._atkCooldown = 0;
     this._abilityCooldown = 0;
     this._abilityMaxCooldown = ABILITY_COOLDOWNS[classId] ?? 1;
@@ -100,6 +103,13 @@ export class Player {
     } else if (ax !== 0 || ay !== 0) {
       this._facingX = ax;
       this._facingY = ay;
+    }
+
+    // Track last non-zero movement direction for the facing arrow
+    if (ax !== 0 || ay !== 0) {
+      const mlen = Math.hypot(ax, ay) || 1;
+      this._moveDirX = ax / mlen;
+      this._moveDirY = ay / mlen;
     }
 
     const dx = ax * this.speed * dt;
@@ -573,9 +583,10 @@ export class Player {
     ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Facing arrow — player-colored, replaces the old black dot
-    const flen = Math.hypot(this._facingX, this._facingY) || 1;
-    const fdx = this._facingX / flen, fdy = this._facingY / flen;
+    // Movement arrow — shows which way the player is moving/facing,
+    // independent of auto-aim.  Uses _moveDirX/Y (last input direction).
+    const flen = Math.hypot(this._moveDirX, this._moveDirY) || 1;
+    const fdx = this._moveDirX / flen, fdy = this._moveDirY / flen;
     // perpendicular for arrowhead wings
     const fpx = -fdy, fpy = fdx;
     const arBase = this.radius + 5;
