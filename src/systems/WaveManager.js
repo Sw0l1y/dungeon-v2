@@ -23,8 +23,9 @@ export class WaveManager {
   startWave() {
     if (this.active || this.bossDefeated) return;
     this.wave++;
-    this.active   = true;
-    this._enemies = [];
+    this.active      = true;
+    this._enemies    = [];
+    this._spawnCache = null; // refresh so destroyed walls open new spawn areas
 
     // Per-room wave config (set on level.waveConfig by DynamicLevel); falls back to
     // the hardcoded formula when not present or when this wave index has no entry.
@@ -68,8 +69,9 @@ export class WaveManager {
       const relay  = new Relay(this.level, s2.x, s2.y);
       const pulsar = new Pulsar(this.level, s1.x, s1.y, relay);
       relay.pulsar = pulsar;
-      relay._netId  = ++this._netIdSeq;
-      pulsar._netId = ++this._netIdSeq;
+      relay._netId             = ++this._netIdSeq;
+      pulsar._netId            = ++this._netIdSeq;
+      relay._linkedPulsarNetId = pulsar._netId;  // for client beam-sync
       this.level.addEntity(relay);
       this.level.addEntity(pulsar);
       this._enemies.push(relay);
@@ -100,7 +102,8 @@ export class WaveManager {
     }
   }
 
-  // Collect valid floor tiles in the outer 35% of the map, cached after first call.
+  // Collect valid floor tiles in the outer 35% of the map.
+  // Recalculated each wave so destroyed walls open up new spawn areas.
   _spawnSpots() {
     if (this._spawnCache) return this._spawnCache;
     const { map, tileSize: ts } = this.level;
@@ -109,7 +112,7 @@ export class WaveManager {
     const spots = [];
     for (let r = 1; r < rows - 1; r++) {
       for (let c = 1; c < cols - 1; c++) {
-        if (map[r][c] !== 0) continue; // tile 3 (no-spawn floor) is naturally excluded here
+        if (map[r][c] !== 0) continue; // tile 3 (no-spawn floor) naturally excluded
         const rx = c / cols;
         const ry = r / rows;
         if (rx < 0.35 || rx > 0.65 || ry < 0.35 || ry > 0.65) {
@@ -117,7 +120,15 @@ export class WaveManager {
         }
       }
     }
-    this._spawnCache = spots.length ? spots : [{ x: 5 * ts, y: 5 * ts }];
+    if (spots.length) { this._spawnCache = spots; return spots; }
+
+    // Fallback: outer zone had no tile-0 floor — search entire map for any floor tile
+    for (let r = 1; r < rows - 1; r++) {
+      for (let c = 1; c < cols - 1; c++) {
+        if (map[r][c] === 0) spots.push({ x: (c + 0.5) * ts, y: (r + 0.5) * ts });
+      }
+    }
+    this._spawnCache = spots.length ? spots : [{ x: 1.5 * ts, y: 1.5 * ts }];
     return this._spawnCache;
   }
 }

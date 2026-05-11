@@ -438,41 +438,39 @@ export class Player {
   }
 
   _nearestEnemy() {
-    // Threat score = estimated seconds to reach player (lower = more dangerous).
-    // Enemies behind walls get a 2.5x distance penalty since they must path around.
-    const LOS_PENALTY  = 2.5;
-    // Only retarget if the new candidate is 30% more threatening than the current lock.
-    // Prevents jittery switching between equally-dangerous enemies.
+    // Strict LoS-first: only lock onto enemies with a clear sightline.
+    // If no LoS target exists, return null → crosshair hidden, free aim.
+    // Only retarget if the new candidate is 30% closer (prevents jitter).
     const SWITCH_THRESHOLD = 0.70;
 
-    let bestScore  = Infinity;
-    let bestTarget = null;
-
     // On the client enemies live in level.ghostEntities (not level.entities).
-    // Merge both so auto-aim works correctly on both host and client.
     const candidates = this.level.ghostEntities?.length
       ? this.level.ghostEntities
       : this.level.entities;
 
+    let bestScore  = Infinity;
+    let bestTarget = null;
+
     for (const e of candidates) {
       if (!e.isEnemy || !e.alive) continue;
-      const dist        = Math.hypot(e.x - this.x, e.y - this.y);
-      const los         = this._hasLos(e);
-      const effDist     = los ? dist : dist * LOS_PENALTY;
-      const score       = effDist / (e.speed || 75); // seconds to reach
+      if (!this._hasLos(e)) continue;            // hard LoS gate — walls block entirely
+      const score = Math.hypot(e.x - this.x, e.y - this.y) / (e.speed || 75);
       if (score < bestScore) { bestScore = score; bestTarget = e; }
     }
 
-    // Stickiness: keep current lock unless the new target is significantly more threatening.
-    // Also verify the locked target is still in the candidate list (ghost proxies are
-    // replaced each frame by reference, so we match by position proximity instead).
-    const lockStillValid = this._aimTarget?.alive &&
-      candidates.some(e => e === this._aimTarget ||
-        (e.isEnemy && Math.hypot(e.x - this._aimTarget.x, e.y - this._aimTarget.y) < 2));
-    if (lockStillValid) {
-      const cd      = Math.hypot(this._aimTarget.x - this.x, this._aimTarget.y - this.y);
-      const cLos    = this._hasLos(this._aimTarget);
-      const cScore  = (cLos ? cd : cd * LOS_PENALTY) / (this._aimTarget.speed || 75);
+    // No LoS targets → clear lock and return to free aim
+    if (!bestTarget) {
+      this._aimTarget = null;
+      return null;
+    }
+
+    // Stickiness: keep current lock if still in LoS and not significantly worse.
+    // Ghost proxies are replaced each frame by reference, so match by proximity.
+    if (this._aimTarget?.alive && this._hasLos(this._aimTarget) &&
+        candidates.some(e => e === this._aimTarget ||
+          (e.isEnemy && Math.hypot(e.x - this._aimTarget.x, e.y - this._aimTarget.y) < 2))) {
+      const cScore = Math.hypot(this._aimTarget.x - this.x, this._aimTarget.y - this.y)
+                     / (this._aimTarget.speed || 75);
       if (bestScore >= cScore * SWITCH_THRESHOLD) return this._aimTarget;
     }
 
@@ -489,7 +487,8 @@ export class Player {
       const t   = i / steps;
       const col = Math.floor((this.x + dx * t) / ts);
       const row = Math.floor((this.y + dy * t) / ts);
-      if (map[row]?.[col] > 0) return false;
+      const tile = map[row]?.[col];
+      if (tile === 1 || tile === 2) return false; // tile 3 is passable, not a LoS blocker
     }
     return true;
   }

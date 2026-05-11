@@ -39,7 +39,7 @@ export function astar(map, sc, sr, ec, er) {
   const rows = map.length;
   const cols = map[0].length;
 
-  if ((map[er]?.[ec] ?? 1) > 0) return [];
+  if ((map[er]?.[ec] ?? 1) === 1 || (map[er]?.[ec] ?? 1) === 2) return [];
 
   const h = (c, r) => {
     const dx = Math.abs(c - ec), dy = Math.abs(r - er);
@@ -76,8 +76,8 @@ export function astar(map, sc, sr, ec, er) {
     for (const [dc, dr] of DIRS) {
       const nc = c + dc, nr = r + dr;
       if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
-      if (map[nr][nc] > 0) continue;
-      if (dc !== 0 && dr !== 0 && (map[r][nc] > 0 || map[nr][c] > 0)) continue;
+      if (map[nr][nc] === 1 || map[nr][nc] === 2) continue;
+      if (dc !== 0 && dr !== 0 && ((map[r][nc] === 1 || map[r][nc] === 2) || (map[nr][c] === 1 || map[nr][c] === 2))) continue;
 
       const nk = key(nc, nr);
       if (closed.has(nk)) continue;

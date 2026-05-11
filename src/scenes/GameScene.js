@@ -48,6 +48,8 @@ export class GameScene extends Scene {
     this._lastSentEnemyPos = new Map();
     // Interpolation delay for ghost rendering (ms behind real-time)
     this._INTERP_DELAY = 80;
+    // Timestamp of last received projectile packet (for velocity extrapolation)
+    this._ghostProjPacketTime = performance.now();
 
     // Multi-client input routing (host only):
     //   Map<peerId, {offset, count}> — which remoteBindings slice each client owns
@@ -497,7 +499,11 @@ export class GameScene extends Scene {
           const stale = !last || (nowMs - last.t) >= 200;
           if (moved || stale) {
             this._lastSentEnemyPos.set(e._netId, { x: ex, y: ey, t: nowMs });
-            result.push([e._netId, e._typeIdx, ex, ey, Math.round(e.hp / e.maxHp * 255)]);
+            // Relay (typeIdx 5): include linked Pulsar netId as 6th field for beam sync
+            const link = (e._typeIdx === 5 && e._linkedPulsarNetId) ? e._linkedPulsarNetId : 0;
+            result.push(link
+              ? [e._netId, e._typeIdx, ex, ey, Math.round(e.hp / e.maxHp * 255), link]
+              : [e._netId, e._typeIdx, ex, ey, Math.round(e.hp / e.maxHp * 255)]);
           } else {
             result.push([e._netId]); // compact: still alive, position unchanged
           }
@@ -648,12 +654,14 @@ export class GameScene extends Scene {
         const [, typeIdx, x, y, hpPct255] = entry;
         const hpPct = (hpPct255 ?? 255) / 255;
         const g = this._ghosts.get(id);
+        const linkedNetId = entry.length >= 6 ? entry[5] : 0;
         if (g) {
           g.x = x; g.y = y; g.hpPct = hpPct; // latest authoritative pos (used for aim proxies)
           g.snaps.push({ t: nowMs, x, y });
           if (g.snaps.length > 6) g.snaps.shift();
+          if (linkedNetId) g.linkedNetId = linkedNetId;
         } else {
-          this._ghosts.set(id, { id, typeIdx, x, y, hpPct, snaps: [{ t: nowMs, x, y }] });
+          this._ghosts.set(id, { id, typeIdx, x, y, hpPct, linkedNetId, snaps: [{ t: nowMs, x, y }] });
         }
       }
       for (const id of this._ghosts.keys()) {
@@ -676,11 +684,12 @@ export class GameScene extends Scene {
       }));
     }
 
-    // Ghost projectiles
+    // Ghost projectiles — stamp arrival time for velocity extrapolation
     if (state.proj) {
       this._ghostProjPl = state.proj.pl ?? [];
       this._ghostProjSw = state.proj.sw ?? [];
       this._ghostProjEp = state.proj.ep ?? [];
+      this._ghostProjPacketTime = performance.now();
     }
 
     // FX events: spawn death particles on client's level for visual parity
@@ -931,6 +940,33 @@ export class GameScene extends Scene {
   _drawGhostRelay(ctx, g) {
     const { x, y, hpPct = 1 } = g;
     const COLOR = '#22ff55';
+
+    // Energy tether to paired Pulsar (mirrors Relay.draw)
+    if (g.linkedNetId) {
+      const pg = this._ghosts.get(g.linkedNetId);
+      if (pg) {
+        const { x: px, y: py } = this._ghostInterp(pg);
+        const t = (performance.now() / 625) % 1; // matches Relay's _pulseT * 1.6
+        ctx.save();
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = 0.10; ctx.strokeStyle = COLOR; ctx.lineWidth = 12;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+        ctx.globalAlpha = 0.28; ctx.lineWidth = 5;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+        ctx.globalAlpha = 0.68; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+        ctx.globalAlpha = 0.82; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(px, py); ctx.stroke();
+        // Animated pulse dot
+        const dotX = x + (px - x) * t;
+        const dotY = y + (py - y) * t;
+        ctx.globalAlpha = 0.9 * Math.sin(t * Math.PI);
+        ctx.fillStyle   = '#ffffff';
+        ctx.beginPath(); ctx.arc(dotX, dotY, 3.5, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+      }
+    }
+
     ctx.save();
     ctx.globalAlpha = 0.18;
     ctx.fillStyle   = COLOR;
@@ -998,20 +1034,27 @@ export class GameScene extends Scene {
 
   /** Draw ghost projectiles on the client (host-local player attacks + enemies). */
   _drawGhostProjectiles(ctx) {
-    // Player projectiles — full arrow with synthetic trail
+    // Time elapsed since last state packet — used to extrapolate positions at 60fps
+    // rather than snapping every 50ms. Cap prevents runaway if packets stop arriving.
+    const extrapolDt = Math.min((performance.now() - this._ghostProjPacketTime) / 1000, 0.12);
+
+    // Player projectiles — velocity-extrapolated position + full arrow with synthetic trail
     for (const [x, y, vx, vy, color] of this._ghostProjPl) {
       const speed = Math.hypot(vx, vy) || 1;
       const dx = vx / speed, dy = vy / speed;
       const px = -dy,        py = dx;
+      // Extrapolate forward from received position using known velocity
+      const ex = x + vx * extrapolDt;
+      const ey = y + vy * extrapolDt;
       const TRAIL = 8, DT = 1 / 60;
       for (let i = 0; i < TRAIL; i++) {
         const frac  = (i + 1) / (TRAIL + 1);
-        const steps = TRAIL - i;           // older = farther back
-        const tx    = x - dx * speed * DT * steps;
-        const ty    = y - dy * speed * DT * steps;
+        const steps = TRAIL - i;
+        const tx    = ex - dx * speed * DT * steps;
+        const ty    = ey - dy * speed * DT * steps;
         this._drawGhostArrow(ctx, tx, ty, dx, dy, px, py, frac * 0.44, color);
       }
-      this._drawGhostArrow(ctx, x, y, dx, dy, px, py, 1, color);
+      this._drawGhostArrow(ctx, ex, ey, dx, dy, px, py, 1, color);
     }
 
     // Sword swings
@@ -1028,11 +1071,13 @@ export class GameScene extends Scene {
       ctx.restore();
     }
 
-    // Enemy projectiles
+    // Enemy projectiles — also extrapolated
     for (const [x, y, vx, vy] of this._ghostProjEp) {
       const speed = Math.hypot(vx, vy) || 1;
-      const tx    = x - (vx / speed) * 18;
-      const ty    = y - (vy / speed) * 18;
+      const ex    = x + vx * extrapolDt;
+      const ey    = y + vy * extrapolDt;
+      const tx    = ex - (vx / speed) * 18;
+      const ty    = ey - (vy / speed) * 18;
 
       const grad = ctx.createLinearGradient(tx, ty, x, y);
       grad.addColorStop(0, 'rgba(255,140,0,0)');
@@ -1040,16 +1085,16 @@ export class GameScene extends Scene {
       ctx.strokeStyle = grad;
       ctx.lineWidth   = 9.8;
       ctx.lineCap     = 'round';
-      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(x, y); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(ex, ey); ctx.stroke();
 
       const pulse = 0.35 + 0.15 * Math.sin(Date.now() / 120);
       ctx.strokeStyle = `rgba(255,160,0,${pulse})`;
       ctx.lineWidth   = 3;
-      ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(ex, ey, 10, 0, Math.PI * 2); ctx.stroke();
       ctx.fillStyle = '#ffb833';
-      ctx.beginPath(); ctx.arc(x, y, 7, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex, ey, 7, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#fff8e0';
-      ctx.beginPath(); ctx.arc(x, y, 3.15, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(ex, ey, 3.15, 0, Math.PI * 2); ctx.fill();
     }
     ctx.lineCap = 'butt';
   }
