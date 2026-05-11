@@ -946,16 +946,72 @@ export class GameScene extends Scene {
     this._drawGhostHealthBar(ctx, x, y, -17, 20, 3, hpPct);
   }
 
+  /**
+   * Draw one arrow at (x,y) facing (dx,dy) with perpendicular (px,py) at given alpha.
+   * Mirrors Projectile._drawArrow so ghost arrows match the real ones exactly.
+   */
+  _drawGhostArrow(ctx, x, y, dx, dy, px, py, alpha, color) {
+    if (alpha < 0.01) return;
+    const HEAD_FWD = 8, SHAFT_BK = 13, BASE_BK = 3, HEAD_WING = 4.5;
+    const FLETCH_BK = 10, FLETCH_W = 4, FLETCH_FW = 3;
+
+    const tipX  = x + dx * HEAD_FWD,   tipY  = y + dy * HEAD_FWD;
+    const baseX = tipX - dx * BASE_BK,  baseY = tipY - dy * BASE_BK;
+    const tailX = x - dx * SHAFT_BK,   tailY = y - dy * SHAFT_BK;
+    const flBX  = x - dx * FLETCH_BK,  flBY  = y - dy * FLETCH_BK;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    ctx.globalAlpha = alpha * 0.10; ctx.strokeStyle = color; ctx.lineWidth = 18;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(tipX, tipY); ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.27; ctx.lineWidth = 9;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(tipX, tipY); ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.78; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(baseX, baseY); ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.92; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(tailX, tailY); ctx.lineTo(baseX, baseY); ctx.stroke();
+
+    ctx.globalAlpha = alpha * 0.92; ctx.fillStyle = color;
+    ctx.beginPath(); ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + px * HEAD_WING, baseY + py * HEAD_WING);
+    ctx.lineTo(baseX - px * HEAD_WING, baseY - py * HEAD_WING);
+    ctx.closePath(); ctx.fill();
+
+    ctx.globalAlpha = alpha * 0.78; ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + px * HEAD_WING * 0.38, baseY + py * HEAD_WING * 0.38);
+    ctx.lineTo(baseX - px * HEAD_WING * 0.38, baseY - py * HEAD_WING * 0.38);
+    ctx.closePath(); ctx.fill();
+
+    ctx.globalAlpha = alpha * 0.55; ctx.strokeStyle = color; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(flBX + px * FLETCH_W, flBY + py * FLETCH_W);
+    ctx.lineTo(flBX + dx * FLETCH_FW, flBY + dy * FLETCH_FW);
+    ctx.lineTo(flBX - px * FLETCH_W, flBY - py * FLETCH_W);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   /** Draw ghost projectiles on the client (host-local player attacks + enemies). */
   _drawGhostProjectiles(ctx) {
-    // Player projectiles
+    // Player projectiles — full arrow with synthetic trail
     for (const [x, y, vx, vy, color] of this._ghostProjPl) {
-      const tx = x - (vx / 420) * 14;
-      const ty = y - (vy / 420) * 14;
-      ctx.fillStyle = color + '55';
-      ctx.beginPath(); ctx.arc(tx, ty, 3, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = color;
-      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      const speed = Math.hypot(vx, vy) || 1;
+      const dx = vx / speed, dy = vy / speed;
+      const px = -dy,        py = dx;
+      const TRAIL = 8, DT = 1 / 60;
+      for (let i = 0; i < TRAIL; i++) {
+        const frac  = (i + 1) / (TRAIL + 1);
+        const steps = TRAIL - i;           // older = farther back
+        const tx    = x - dx * speed * DT * steps;
+        const ty    = y - dy * speed * DT * steps;
+        this._drawGhostArrow(ctx, tx, ty, dx, dy, px, py, frac * 0.44, color);
+      }
+      this._drawGhostArrow(ctx, x, y, dx, dy, px, py, 1, color);
     }
 
     // Sword swings
