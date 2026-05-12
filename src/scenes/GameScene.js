@@ -1168,7 +1168,7 @@ export class GameScene extends Scene {
       const tx    = ex - (vx / speed) * 18;
       const ty    = ey - (vy / speed) * 18;
 
-      const grad = ctx.createLinearGradient(tx, ty, x, y);
+      const grad = ctx.createLinearGradient(tx, ty, ex, ey);
       grad.addColorStop(0, 'rgba(255,140,0,0)');
       grad.addColorStop(1, 'rgba(255,140,0,0.45)');
       ctx.strokeStyle = grad;
