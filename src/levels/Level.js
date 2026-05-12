@@ -117,7 +117,7 @@ export class Level {
    * Fragments bounce off walls and are absorbed by the portal when it exists.
    */
   spawnDeathParticles(x, y, color, count) {
-    const CAP = 600;
+    const CAP = 300;
     const { dark, bright } = this._fragColorVariants(color);
 
     for (let i = 0; i < count; i++) {
@@ -125,7 +125,7 @@ export class Level {
 
       const angle  = (i / count) * Math.PI * 2 + Math.random() * 0.85;
       const speed  = 70 + Math.random() * 170;
-      const life   = 1;   // never decrements — only portal absorption clears these
+      const life   = 8.0;  // seconds; decrements each frame, portal sets to 0 early
       const nSides = 3 + Math.floor(Math.random() * 3);   // 3–5 sides
       const baseR  = 3.5 + Math.random() * 5.5;           // radius 3.5–9 px
 
@@ -195,7 +195,7 @@ export class Level {
 
       d.vx *= velFric;
       d.vy *= velFric;
-      // NOTE: d.life is NOT decremented — fragments persist until portal absorbs them
+      d.life -= dt;
     }
     this._soulDebris = this._soulDebris.filter(d => d.life > 0);
   }
@@ -212,7 +212,7 @@ export class Level {
 
   _drawSoulDebris(ctx) {
     for (const d of this._soulDebris) {
-      const alpha = 0.94;  // solid — no fade; portal absorption removes them
+      const alpha = 0.94 * Math.min(1, d.life / 2.0);  // fade out over last 2 seconds
 
       ctx.save();
       ctx.globalAlpha = alpha;
