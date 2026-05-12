@@ -86,10 +86,8 @@ export class WaveManager {
 
   update(dt) {
     if (this.active) {
-      this._enemies = this._enemies.filter(e => e.alive);
-      if (this._enemies.length === 0) {
+      if (!this._enemies.some(e => e.alive)) {
         this.active = false;
-        // Start 15s inter-wave countdown (not after boss — that ends the run)
         if (!this.bossDefeated) this._countdown = 9;
       }
       return;

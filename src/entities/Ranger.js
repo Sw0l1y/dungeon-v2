@@ -103,19 +103,6 @@ export class Ranger {
       this.level.addEntity(new EnemyProjectile(this.level, this.x, this.y, (dx / len) * speed, (dy / len) * speed));
     }
 
-    // Separate from overlapping enemies
-    for (const other of this.level.entities) {
-      if (other === this || !other.isEnemy || !other.alive) continue;
-      const odx  = this.x - other.x;
-      const ody  = this.y - other.y;
-      const d2   = Math.hypot(odx, ody);
-      const min  = this.radius + other.radius;
-      if (d2 < min && d2 > 0) {
-        const push = (min - d2) / 2;
-        this.x += (odx / d2) * push;
-        this.y += (ody / d2) * push;
-      }
-    }
 
     // Contact damage (fallback — shouldn't happen often)
     this._hitCooldown = Math.max(0, this._hitCooldown - dt);

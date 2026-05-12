@@ -15,8 +15,36 @@ export class Level {
 
   update(dt) {
     for (const e of this.entities) e.update?.(dt);
+    this._separateEnemies();
     this._updateDebris(dt);
     this._updateSoulDebris(dt);
+  }
+
+  // Run enemy-separation once per frame as an O(n*(n-1)/2) pair pass rather
+  // than having each enemy iterate all entities independently (was O(n²/frame)).
+  _separateEnemies() {
+    const ents = this.entities;
+    const n = ents.length;
+    for (let i = 0; i < n; i++) {
+      const a = ents[i];
+      if (!a.isEnemy || !a.alive) continue;
+      for (let j = i + 1; j < n; j++) {
+        const b = ents[j];
+        if (!b.isEnemy || !b.alive) continue;
+        const dx = a.x - b.x;
+        const dy = a.y - b.y;
+        const dist2 = dx * dx + dy * dy;
+        const min = a.radius + b.radius;
+        if (dist2 < min * min && dist2 > 0) {
+          const dist = Math.sqrt(dist2);
+          const push = (min - dist) / 2 / dist;
+          a.x += dx * push;
+          a.y += dy * push;
+          b.x -= dx * push;
+          b.y -= dy * push;
+        }
+      }
+    }
   }
 
   draw(ctx) {

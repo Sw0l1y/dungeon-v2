@@ -85,19 +85,6 @@ export class Sprinter {
       if (!this._collidesAt(this.x, ny)) this.y = ny;
     }
 
-    // Separate from overlapping enemies
-    for (const other of this.level.entities) {
-      if (other === this || !other.isEnemy || !other.alive) continue;
-      const odx  = this.x - other.x;
-      const ody  = this.y - other.y;
-      const dist = Math.hypot(odx, ody);
-      const min  = this.radius + other.radius;
-      if (dist < min && dist > 0) {
-        const push = (min - dist) / 2;
-        this.x += (odx / dist) * push;
-        this.y += (ody / dist) * push;
-      }
-    }
 
     // Contact damage
     this._hitCooldown = Math.max(0, this._hitCooldown - dt);
