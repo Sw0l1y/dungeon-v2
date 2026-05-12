@@ -677,6 +677,14 @@ export class GameScene extends Scene {
           pl._remoteX = pd.x;
           pl._remoteY = pd.y;
           pl.binding.applyRemote?.({ x: 0, y: 0, ak: 0, it: 0 });
+          // Sync facing arrow direction from the host's movement axes.
+          // Player.update() only updates _moveDirX/Y when axes are non-zero,
+          // but RemoteBinding always returns zero — so we drive it directly here.
+          if (pd.ax !== 0 || pd.ay !== 0) {
+            const mlen = Math.hypot(pd.ax, pd.ay) || 1;
+            pl._moveDirX = pd.ax / mlen;
+            pl._moveDirY = pd.ay / mlen;
+          }
         } else {
           // Local player — client-side prediction.
           // The client's own physics runs at 60 fps from real keyboard input.
