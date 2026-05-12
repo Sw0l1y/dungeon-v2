@@ -1,5 +1,5 @@
 {
-  "mapVersion": "cuck-v8",
+  "mapVersion": "cuck-v9",
   "campaign": [
     {
       "id": "room-4ychi84",
@@ -1130,7 +1130,7 @@
     },
     {
       "id": "room-zabv152",
-      "name": "spiral ",
+      "name": "Forest",
       "cols": 35,
       "rows": 20,
       "tileSize": 40,
@@ -1920,7 +1920,7 @@
     },
     {
       "id": "room-1qzqx6i",
-      "name": "cold Furnace",
+      "name": "Disaster",
       "cols": 31,
       "rows": 17,
       "tileSize": 40,
