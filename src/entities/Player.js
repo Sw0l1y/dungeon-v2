@@ -155,6 +155,7 @@ export class Player {
 
       for (const e of [...this.level.entities]) {
         if (!e.isEnemy || !e.alive || this._dashHit.has(e)) continue;
+        if (e._shielded) continue; // Pulsar: only hittable once Relay is dead
         if (Math.hypot(e.x - this.x, e.y - this.y) < this.radius + e.radius + 2) {
           e.takeDamage(50, this, 'melee');
           this._dashHit.add(e);
