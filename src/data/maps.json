@@ -1,5 +1,5 @@
 {
-  "mapVersion": "cuck-v9",
+  "mapVersion": "cuck-v10",
   "campaign": [
     {
       "id": "room-4ychi84",
@@ -594,6 +594,11 @@
           1
         ]
       ]
+    },
+    {
+      "id": "room-p94i5n9",
+      "name": "The Armory",
+      "type": "shop"
     },
     {
       "id": "room-3f9y09n",
