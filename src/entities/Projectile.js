@@ -1,19 +1,28 @@
 export class Projectile {
   constructor(level, x, y, vx, vy, owner) {
-    this.level     = level;
-    this.x         = x;
-    this.y         = y;
-    this.vx        = vx;
-    this.vy        = vy;
-    this.owner     = owner;
-    this.radius    = 5;
-    this._lifetime = 3;
-    this._trail    = []; // actual past positions — grows as the arrow travels
+    this.level        = level;
+    this.x            = x;
+    this.y            = y;
+    this.vx           = vx;
+    this.vy           = vy;
+    this.owner        = owner;
+    this.radius       = 5;
+    this._lifetime    = 3;
+    this._trail       = []; // actual past positions — grows as the arrow travels
+    // Ricochet: set by GameScene when archer has the upgrade
+    this._canRicochet = false;
+    this._bounced     = false;
+    this._prevX       = x;
+    this._prevY       = y;
   }
 
   update(dt) {
     this._lifetime -= dt;
     if (this._lifetime <= 0) { this.level.removeEntity(this); return; }
+
+    // Track previous position for ricochet wall-normal detection
+    this._prevX = this.x;
+    this._prevY = this.y;
 
     this.x += this.vx * dt;
     this.y += this.vy * dt;
@@ -37,6 +46,21 @@ export class Projectile {
     const col = Math.floor(this.x / ts);
     const row = Math.floor(this.y / ts);
     if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] === 1 || map[row][col] === 2) {
+      // ── Ricochet: bounce off wall once ────────────────────────────────────
+      if (this._canRicochet && !this._bounced) {
+        const prevCol = Math.floor(this._prevX / ts);
+        const prevRow = Math.floor(this._prevY / ts);
+        // Reflect velocity based on which boundary was crossed
+        if (prevCol !== col) this.vx = -this.vx;   // vertical wall face
+        if (prevRow !== row) this.vy = -this.vy;   // horizontal wall face
+        // If neither changed (same tile, somehow inside wall) reflect both
+        if (prevCol === col && prevRow === row) { this.vx = -this.vx; this.vy = -this.vy; }
+        // Step back to pre-collision position so arrow doesn't get stuck
+        this.x = this._prevX;
+        this.y = this._prevY;
+        this._bounced = true;
+        return; // don't remove
+      }
       this.level.removeEntity(this);
     }
   }

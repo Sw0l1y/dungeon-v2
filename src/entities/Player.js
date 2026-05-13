@@ -64,6 +64,11 @@ export class Player {
     // Stats
     this.dmgDealt = 0;
     this.dmgTaken = 0;
+    // Upgrades state (set once per room)
+    this._momentumTimer    = 0;      // +40% speed for 1.5s after ability
+    this._chargeTimer      = 0;      // overcharge: seconds held
+    this._wasHoldingAttack = false;  // previous frame attack-held state (overcharge)
+    this._wallBreakerUsed  = false;  // consumed when wall breaker item fires
   }
 
   takeDamage(amount) {
@@ -79,9 +84,10 @@ export class Player {
     }
   }
 
-  /** Revive this player with 40 % HP and brief iframes. */
+  /** Revive this player — 60 % HP with Revive Boost upgrade, 40 % otherwise. */
   revive() {
-    this.hp      = Math.floor(this.maxHp * 0.4);
+    const pct    = this.game.state.upgrades?.reviveBoost ? 0.6 : 0.4;
+    this.hp      = Math.floor(this.maxHp * pct);
     this.alive   = true;
     this._downed = false;
     this._iframes = 1.5;
@@ -115,8 +121,13 @@ export class Player {
       this._moveDirY = ay / mlen;
     }
 
-    const dx = ax * this.speed * dt;
-    const dy = ay * this.speed * dt;
+    // Tick momentum timer
+    if (this._momentumTimer > 0) this._momentumTimer = Math.max(0, this._momentumTimer - dt);
+
+    // Movement — boost speed while momentum is active
+    const momentumMult = (this._momentumTimer > 0 && this.game.state.upgrades?.momentum) ? 1.4 : 1;
+    const dx = ax * this.speed * momentumMult * dt;
+    const dy = ay * this.speed * momentumMult * dt;
 
     const nx = this.x + dx;
     if (!this._collidesAt(nx, this.y)) this.x = nx;
@@ -188,7 +199,37 @@ export class Player {
       this._useAbility(ax, ay);
     }
 
-    if (this.binding.justPressed('attack') && (this._atkCooldown === 0 || this._devMode)) {
+    // ── Attack / Overcharge ────────────────────────────────────────────────────
+    const overchargeTier = this.game.state.upgrades?.overchargeTier ?? 0;
+    if (this.classId === 'sword' && overchargeTier > 0 && !this._devMode) {
+      // Overcharge: hold attack to build charge; release to fire scaled swing
+      const holding  = this.binding.isHeld('attack');
+      const released = this._wasHoldingAttack && !holding;
+      this._wasHoldingAttack = holding;
+
+      if (this._atkCooldown === 0) {
+        if (holding) {
+          this._chargeTimer += dt;
+          if (this._chargeTimer >= 1.8) {
+            // Auto-fire at max charge
+            this._fireOvercharge(1.0, overchargeTier);
+            this._chargeTimer = 0;
+          }
+        } else if (released && this._chargeTimer > 0) {
+          if (this._chargeTimer >= 0.25) {
+            this._fireOvercharge(Math.min(1.0, this._chargeTimer / 1.8), overchargeTier);
+          } else {
+            // Quick tap — normal swing
+            this._attack();
+          }
+          this._chargeTimer = 0;
+        }
+      } else {
+        // On cooldown — reset so tap after cooldown triggers a new charge
+        this._chargeTimer = 0;
+        this._wasHoldingAttack = false;
+      }
+    } else if (this.binding.justPressed('attack') && (this._atkCooldown === 0 || this._devMode)) {
       this._atkCooldown = 0;
       this._attack();
     }
@@ -223,6 +264,7 @@ export class Player {
     this._lungeHit.clear();
     this._damageShield = 0.28;
     this._abilityCooldown = this._abilityMaxCooldown;
+    if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
   }
 
   _updateLunge(dt) {
@@ -279,6 +321,7 @@ export class Player {
     this.y = end.y;
     this._iframes = 0.20;
     this._abilityCooldown = this._abilityMaxCooldown;
+    if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
     this._dashTrail.push({ x: this.x, y: this.y, a: 0.75 });
 
     for (let i = 1; i < points.length; i++) {
@@ -301,7 +344,8 @@ export class Player {
       : (this.level.ghostEntities ?? []);
     const picked = [];
     let fromX = this.x, fromY = this.y;
-    for (let i = 0; i < 3; i++) {
+    const maxChain = (this.game.state.upgrades?.shadowChain && this.classId === 'rogue') ? 6 : 3;
+    for (let i = 0; i < maxChain; i++) {
       let best = null, bestScore = Infinity;
       for (const e of candidates) {
         if (!this._canRicochetKill(e) || picked.includes(e)) continue;
@@ -398,10 +442,20 @@ export class Player {
         dirX = dx / len;
         dirY = dy / len;
       }
-      this.level.addEntity(
-        new Projectile(this.level, this.x, this.y, dirX * speed, dirY * speed, this)
-      );
+      const proj = new Projectile(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
+      if (this.game.state.upgrades?.ricochet) proj._canRicochet = true;
+      this.level.addEntity(proj);
     }
+  }
+
+  /** Fire an overcharged sword swing — called by the overcharge hold-release logic. */
+  _fireOvercharge(t, tier) {
+    const dmgMult  = 1.0 + t * (tier >= 2 ? 2.0 : 1.5);   // up to 3× (t2) or 2.5× (t1) base dmg
+    const sizeMult = 1.0 + t * (tier >= 2 ? 1.2 : 0.8);   // up to 2.2× (t2) or 1.8× (t1) size
+    this._atkCooldown = (0.38 * (1 + t * 1.5)) / this._weaponSpeedMult;
+    this.level.addEntity(
+      new SwordSwing(this.level, this.x, this.y, this._facingX, this._facingY, this, dmgMult, sizeMult)
+    );
   }
 
   _drawDowned(ctx) {
@@ -680,7 +734,74 @@ export class Player {
     ctx.fillStyle = this._devMode ? '#ffe066' : this.color;
     ctx.fillText(nameLabel, this.x, tagY);
 
+    // ── Upgrade visuals ────────────────────────────────────────────────────────
+    this._drawUpgradeVisuals(ctx);
+
     if (scaled) ctx.restore();
+  }
+
+  /** Visual overlays driven by upgrade state — drawn after the main body. */
+  _drawUpgradeVisuals(ctx) {
+    const upg = this.game.state.upgrades;
+    if (!upg) return;
+
+    // ── Overcharge: glow ring + charge bar below health bar ─────────────────
+    const ocTier = upg.overchargeTier ?? 0;
+    if (this.classId === 'sword' && ocTier > 0 && this._chargeTimer > 0.05) {
+      const pct = Math.min(1, this._chargeTimer / 1.8);
+      ctx.save();
+      // Pulsing charge aura
+      ctx.globalAlpha  = pct * 0.45;
+      ctx.strokeStyle  = this.color;
+      ctx.lineWidth    = 2.5 + pct * 7;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius + 5 + pct * 20, 0, Math.PI * 2);
+      ctx.stroke();
+      // Extra flash when fully charged
+      if (pct >= 1) {
+        ctx.globalAlpha  = 0.20 + 0.10 * Math.sin(Date.now() / 80);
+        ctx.lineWidth    = 16;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius + 28, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+      // Charge bar — below ability bar
+      const barW = 32, barH = 3;
+      const barX = this.x - barW / 2;
+      const barY = this.y - this.radius - 10;   // just above the health bar row
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(barX, barY, barW, barH);
+      ctx.fillStyle = pct >= 1 ? '#ff8844' : pct > 0.5 ? '#ffdd44' : '#e8e8ff';
+      ctx.fillRect(barX, barY, barW * pct, barH);
+    }
+
+    // ── Momentum: soft speed-aura when active ───────────────────────────────
+    if (upg.momentum && this._momentumTimer > 0) {
+      const ma = (this._momentumTimer / 1.5) * 0.32;
+      ctx.save();
+      ctx.globalAlpha  = ma;
+      ctx.strokeStyle  = '#aaffaa';
+      ctx.lineWidth    = 2.5;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius + 9, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // ── Wall Breaker: item charge indicator above the nametag ───────────────
+    if (upg.wallBreaker) {
+      const ready = !this._wallBreakerUsed;
+      const tagY = this.y - this.radius - 30;
+      ctx.save();
+      ctx.globalAlpha  = ready ? 0.82 : 0.28;
+      ctx.fillStyle    = ready ? '#ffd166' : 'rgba(255,209,102,0.5)';
+      ctx.font         = '9px "Trebuchet MS", sans-serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ready ? '◈ BLAST [E]' : '◈ used', this.x, tagY);
+      ctx.restore();
+    }
   }
 
   _drawCrosshair(ctx) {

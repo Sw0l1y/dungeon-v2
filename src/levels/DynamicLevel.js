@@ -63,6 +63,14 @@ export class DynamicLevel extends Level {
         if (upg.weaponSpeedTier > 0) pl._weaponSpeedMult = 1 + 0.20 * upg.weaponSpeedTier;
         if (upg.maxHpTier       > 0) { pl.maxHp += 30 * upg.maxHpTier; pl.hp = pl.maxHp; }
         if (upg.pendingHeal)         pl.hp = pl.maxHp;
+        // Glass Cannon: halve max HP, double weapon speed
+        if (upg.glassCannon) {
+          pl.maxHp = Math.max(1, Math.floor(pl.maxHp * 0.5));
+          pl.hp    = pl.maxHp;
+          pl._weaponSpeedMult *= 2.0;
+        }
+        // Wall Breaker: reset use each room
+        pl._wallBreakerUsed = false;
       }
       upg.pendingHeal = false;   // consume — won't fire again until the next flask purchase
     }

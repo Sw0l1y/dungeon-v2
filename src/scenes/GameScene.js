@@ -111,18 +111,92 @@ export class GameScene extends Scene {
     // CLIENT:    visual-only; gold is synced via 'gd' field in state packets.
     this._goldShards = [];
 
-    // Intercept death particle spawns:
-    //   HOST  — relay to client as 'ev' events AND spawn gold shards
-    //   solo  — just spawn gold shards (no relay needed)
-    //   client — handled separately in _applyHostState
+    // ── Upgrade system hooks — only on HOST/solo (client is driven by packets) ─
+
     if (this._netRole !== 'client') {
+      // ── Hook: spawnDeathParticles (gold shards + bounty multiplier + net relay) ─
       const origSpawn = this.level.spawnDeathParticles.bind(this.level);
       this.level.spawnDeathParticles = (x, y, color, count) => {
         origSpawn(x, y, color, count);
         if (this._netRole === 'host') {
           this._pendingEvents.push({ k: 'd', x: Math.round(x), y: Math.round(y), c: color, n: count });
         }
-        this._spawnGoldShards(x, y, count);
+        const mult = this.level._pendingBountyMult ?? 1;
+        this.level._pendingBountyMult = 1;
+        this._spawnGoldShards(x, y, count, mult);
+      };
+
+      // ── Hook: addEntity — patch enemies for Bleed DoT and Bounty gold mark ──
+      const origAdd = this.level.addEntity.bind(this.level);
+      this.level.addEntity = (e) => {
+        origAdd(e);
+        if (!e.isEnemy) return e;
+
+        const upg = this.game.state.upgrades;
+
+        // Bounty: 20% chance to mark enemy — triple gold on death
+        if (upg?.bounty && Math.random() < 0.2 && !e.isBoss) {
+          e._bountyMarked = true;
+          // Wrap draw() to add gold ring
+          const origDraw = e.draw?.bind(e);
+          if (origDraw) {
+            e.draw = (ctx) => {
+              origDraw(ctx);
+              const pulse = 0.55 + 0.25 * Math.sin(Date.now() / 240);
+              ctx.save();
+              ctx.globalAlpha  = pulse;
+              ctx.strokeStyle  = '#ffd166';
+              ctx.lineWidth    = 2.5;
+              ctx.shadowColor  = '#ffd166';
+              ctx.shadowBlur   = 8;
+              ctx.beginPath();
+              ctx.arc(e.x, e.y, (e.radius ?? 12) + 6, 0, Math.PI * 2);
+              ctx.stroke();
+              ctx.restore();
+            };
+          }
+          // Wrap takeDamage to set bounty multiplier just before death
+          const origTD = e.takeDamage?.bind(e);
+          if (origTD) {
+            e.takeDamage = (amt, src, tp) => {
+              if (e.alive && e.hp > 0 && amt >= e.hp) {
+                this.level._pendingBountyMult = 3;
+              }
+              origTD(amt, src, tp);
+            };
+          }
+        }
+
+        // Bleed: wrap takeDamage so player hits apply a 3s DoT
+        if (upg?.bleed) {
+          const origTDBleed = e.takeDamage?.bind(e);
+          if (origTDBleed && !e._bleedWrapped) {
+            e._bleedWrapped = true;
+            const level = this.level;
+            e.takeDamage = (amt, src, tp) => {
+              origTDBleed(amt, src, tp);
+              if (src && level.players.includes(src) && e.alive) {
+                e._bleedTimer    = 3.0;
+                e._bleedDmgTimer = (e._bleedDmgTimer ?? 0);
+              }
+            };
+          }
+        }
+
+        return e;
+      };
+
+      // ── Hook: destroyWall — Salvage gold + network tile-destroy events ───────
+      const origDestroy = this.level.destroyWall.bind(this.level);
+      this.level.destroyWall = (col, row) => {
+        origDestroy(col, row);
+        if (this._netRole === 'host') {
+          this._pendingEvents.push({ k: 'td', c: col, r: row });
+        }
+        if (this.game.state.upgrades?.salvage) {
+          const ts = this.level.tileSize ?? 40;
+          this._spawnGoldShards((col + 0.5) * ts, (row + 0.5) * ts, 4);
+        }
       };
     }
 
@@ -218,6 +292,68 @@ export class GameScene extends Scene {
 
     // Gold shard physics — runs on all roles (client shards are visual-only)
     if (this._goldShards.length > 0) this._updateGoldShards(dt);
+
+    // ── Upgrade ticks (HOST / solo only — client follows via packets) ─────────
+    if (this._netRole !== 'client') {
+      // Bleed DoT — tick on all enemies with _bleedTimer > 0
+      if (this.game.state.upgrades?.bleed) {
+        for (const e of [...this.level.entities]) {
+          if (!e.isEnemy || !e.alive || !(e._bleedTimer > 0)) continue;
+          e._bleedTimer    -= dt;
+          e._bleedDmgTimer  = (e._bleedDmgTimer ?? 0) + dt;
+          // 5 damage per 0.5s tick = 30 damage over 3s
+          while (e._bleedDmgTimer >= 0.5 && e._bleedTimer > -0.5) {
+            e._bleedDmgTimer -= 0.5;
+            if (!e.alive) break;
+            e.hp = Math.max(0, e.hp - 5);
+            if (e.hp <= 0 && e.alive) {
+              e.alive = false;
+              e.takeDamage?.(0, null, 'bleed');   // triggers death/cleanup
+            }
+          }
+          if (e._bleedTimer <= 0) e._bleedTimer = 0;
+        }
+      }
+
+      // Wall Breaker item — interact key, HOST/solo authoritative
+      if (this.game.state.upgrades?.wallBreaker) {
+        for (const pl of this.level.players) {
+          if (!pl.alive || pl._wallBreakerUsed) continue;
+          if (!pl.binding.justPressed('interact')) continue;
+          // Priority check: don't fire if near downed ally or portal
+          const nearDowned = this.level.players.some(
+            d => d._downed && d !== pl && Math.hypot(d.x - pl.x, d.y - pl.y) <= 70
+          );
+          if (nearDowned) continue;
+          const nearPortal = this.level.entities.some(
+            e => e.isPortal && Math.hypot(e.x - pl.x, e.y - pl.y) < 85
+          );
+          if (nearPortal) continue;
+          // Destroy all tile-2 tiles within 120px
+          const RADIUS = 120;
+          const { map, tileSize: ts } = this.level;
+          if (!map) continue;
+          const c0 = Math.max(0, Math.floor((pl.x - RADIUS) / ts));
+          const c1 = Math.min(map[0].length - 1, Math.ceil((pl.x + RADIUS) / ts));
+          const r0 = Math.max(0, Math.floor((pl.y - RADIUS) / ts));
+          const r1 = Math.min(map.length - 1, Math.ceil((pl.y + RADIUS) / ts));
+          let broke = false;
+          for (let r = r0; r <= r1; r++) {
+            for (let c = c0; c <= c1; c++) {
+              if (map[r]?.[c] === 2) {
+                const wx = (c + 0.5) * ts;
+                const wy = (r + 0.5) * ts;
+                if (Math.hypot(wx - pl.x, wy - pl.y) <= RADIUS) {
+                  this.level.destroyWall(c, r);
+                  broke = true;
+                }
+              }
+            }
+          }
+          if (broke) pl._wallBreakerUsed = true;
+        }
+      }
+    }
 
     // Flush remote bindings on the HOST after level.update so justPressed flags
     // (including the new ability latch) are cleared for the next frame.
@@ -658,6 +794,8 @@ export class GameScene extends Scene {
         rt: pl._ricochetTrail?.length
           ? pl._ricochetTrail.map(s => [Math.round(s.x0), Math.round(s.y0), Math.round(s.x1), Math.round(s.y1), +s.delay.toFixed(3), +s.a.toFixed(2)])
           : undefined,
+        // Wall Breaker used flag — so client shows correct indicator
+        wb: pl._wallBreakerUsed ? 1 : undefined,
       })),
       // Enemies: full [netId, typeIdx, x, y, hpPct0-255] OR compact [netId] (alive, pos unchanged).
       // Compact entries save bandwidth when enemies are stationary; client keeps last known pos.
@@ -716,6 +854,14 @@ export class GameScene extends Scene {
       ev: this._pendingEvents.splice(0),
       // Gold — synced so client counter matches host in real-time
       gd: this.game.state.gold,
+      // Bounty-marked enemy netIds (for client gold-ring visual)
+      bm: (() => {
+        const marked = [];
+        for (const e of ents) {
+          if (e.isEnemy && e.alive && e._bountyMarked) marked.push(e._netId);
+        }
+        return marked.length ? marked : undefined;
+      })(),
     };
   }
 
@@ -879,6 +1025,9 @@ export class GameScene extends Scene {
         if (pd.d && !pl._downed) { pl._downed = true;  pl.alive = false; }
         if (!pd.d && pl._downed) { pl._downed = false; pl.alive = true;  }
 
+        // Wall Breaker used state — keep indicator in sync on client
+        if (pd.wb !== undefined) pl._wallBreakerUsed = !!pd.wb;
+
         // Rogue trail sync — apply received trail arrays so the visual plays on both screens
         if (pd.dt !== undefined) {
           pl._dashTrail = pd.dt.map(([x, y, a]) => ({ x, y, a }));
@@ -981,11 +1130,28 @@ export class GameScene extends Scene {
           this.level.spawnDeathParticles(ev.x, ev.y, ev.c, ev.n);
           this._spawnGoldShards(ev.x, ev.y, ev.n);   // visual-only on client
         }
+        // Tile destroy — apply to client's map (wall breaker / other destruction)
+        if (ev.k === 'td') {
+          this.level.destroyWall?.(ev.c, ev.r);
+          // Salvage visual shards on client
+          if (this.game.state.upgrades?.salvage) {
+            const ts = this.level.tileSize ?? 40;
+            this._spawnGoldShards((ev.c + 0.5) * ts, (ev.r + 0.5) * ts, 4);
+          }
+        }
       }
     }
 
     // Sync gold counter from host (authoritative)
     if (state.gd !== undefined) this.game.state.gold = state.gd;
+
+    // Bounty marks — update ghost markers
+    if (state.bm !== undefined) {
+      const marked = new Set(state.bm);
+      for (const g of this._ghosts.values()) {
+        g.bountyMarked = marked.has(g.id);
+      }
+    }
 
     // Update remote wave state (used for HUD)
     if (state.wv) {
@@ -1093,6 +1259,22 @@ export class GameScene extends Scene {
         case 3: this._drawGhostBoss(ctx, gv);     break;
         case 4: this._drawGhostPulsar(ctx, gv);   break;
         case 5: this._drawGhostRelay(ctx, gv);    break;
+      }
+      // Bounty mark — gold ring on marked enemies
+      if (gv.bountyMarked) {
+        const RADII = [12, 9, 13, 38, 14, 8];
+        const r   = (RADII[gv.typeIdx] ?? 12) + 6;
+        const pa  = 0.55 + 0.25 * Math.sin(Date.now() / 240);
+        ctx.save();
+        ctx.globalAlpha  = pa;
+        ctx.strokeStyle  = '#ffd166';
+        ctx.lineWidth    = 2.5;
+        ctx.shadowColor  = '#ffd166';
+        ctx.shadowBlur   = 8;
+        ctx.beginPath();
+        ctx.arc(gv.x, gv.y, r, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
       }
     }
   }
@@ -1384,14 +1566,15 @@ export class GameScene extends Scene {
   /**
    * Spawn small gold diamond particles at the enemy death position.
    * count is the death-particle count — used to infer enemy tier.
+   * mult is a gold-value multiplier (default 1; 3 for bounty-marked enemies).
    * Each shard carries a gold `value`; only counted on HOST/solo.
    */
-  _spawnGoldShards(x, y, count) {
+  _spawnGoldShards(x, y, count, mult = 1) {
     // Infer enemy tier from particle count (boss ~30, elite ~22, normal ~15)
     const isBoss  = count >= 28;
     const isElite = !isBoss && count >= 20;
     const shards  = isBoss ? 12 : isElite ? 6 : 4;
-    const value   = isBoss ? 12 : isElite ? 5 : 3;  // per shard; totals: 144 / 30 / 12
+    const value   = Math.round((isBoss ? 12 : isElite ? 5 : 3) * mult);  // per shard; totals: 144 / 30 / 12 (×mult for bounty)
     for (let i = 0; i < shards; i++) {
       const angle = Math.random() * Math.PI * 2;
       const speed = 30 + Math.random() * 80;

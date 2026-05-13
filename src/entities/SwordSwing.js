@@ -1,13 +1,20 @@
 export class SwordSwing {
-  constructor(level, x, y, dirX, dirY, owner) {
+  /**
+   * @param {number} dmgMult  – damage multiplier (1 = normal, >1 = overcharge)
+   * @param {number} sizeMult – range & arc scale (1 = normal, >1 = overcharge)
+   */
+  constructor(level, x, y, dirX, dirY, owner, dmgMult = 1, sizeMult = 1) {
     this.level     = level;
     this.x         = x;
     this.y         = y;
     this.dirX      = dirX || 0;
     this.dirY      = dirY || 1;
     this.owner     = owner;
-    this.range     = 80;
-    this.arcAngle  = Math.PI * (100 / 180); // 100°
+    this._dmgMult  = dmgMult;
+    this._sizeMult = sizeMult;
+    // Range grows with size, arc capped at 150° to stay readable
+    this.range     = 80 * sizeMult;
+    this.arcAngle  = Math.PI * (100 / 180) * Math.min(1.5, sizeMult); // up to 150°
     this._duration = 0.21;
     this._timer    = this._duration;
     this._hasHit   = false;
@@ -32,7 +39,7 @@ export class SwordSwing {
         if (Math.hypot(e.x - this.x, e.y - this.y) > this.range + e.radius) continue;
         let diff = Math.atan2(e.y - this.y, e.x - this.x) - base;
         diff = ((diff + Math.PI) % (2 * Math.PI)) - Math.PI; // wrap to [-π, π]
-        if (Math.abs(diff) <= half) e.takeDamage(72, this.owner, 'melee');
+        if (Math.abs(diff) <= half) e.takeDamage(72 * this._dmgMult, this.owner, 'melee');
       }
     }
 
