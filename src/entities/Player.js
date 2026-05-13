@@ -183,7 +183,8 @@ export class Player {
     }
     this._ricochetTrail = this._ricochetTrail.filter(t => t.a > 0);
 
-    if (this.binding.justPressed('abilityA') && this._abilityCooldown === 0) {
+    if (this.binding.justPressed('abilityA') && (this._abilityCooldown === 0 || this._devMode)) {
+      this._abilityCooldown = 0;
       this._useAbility(ax, ay);
     }
 
