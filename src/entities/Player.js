@@ -23,6 +23,8 @@ export class Player {
     this.maxHp  = classId === 'sword' ? 180 : 100;
     this.hp     = this.maxHp;
     this.alive  = true;
+    this._devMode = name === 'dev_1';
+    if (this._devMode) { this.speed *= 2; this.maxHp = 99999; this.hp = 99999; }
     this._facingX    = 0;
     this._facingY    = 1;
     // Last movement input direction — drives the facing arrow independently of auto-aim
@@ -65,7 +67,7 @@ export class Player {
   }
 
   takeDamage(amount) {
-    if (this._iframes > 0 || !this.alive) return;
+    if (this._devMode || this._iframes > 0 || !this.alive) return;
     if (this._damageShield > 0) amount *= 0.25;
     const dealt = Math.min(amount, this.hp);
     this.hp = Math.max(0, this.hp - amount);
@@ -185,7 +187,8 @@ export class Player {
       this._useAbility(ax, ay);
     }
 
-    if (this.binding.justPressed('attack') && this._atkCooldown === 0) {
+    if (this.binding.justPressed('attack') && (this._atkCooldown === 0 || this._devMode)) {
+      this._atkCooldown = 0;
       this._attack();
     }
   }
@@ -662,15 +665,16 @@ export class Player {
     ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    const tw  = ctx.measureText(this.name).width;
+    const nameLabel = this._devMode ? `${this.name} ⚡` : this.name;
+    const tw  = ctx.measureText(nameLabel).width;
     const pad = 5;
     const tagY = this.y - this.radius - 6;
-    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillStyle = this._devMode ? 'rgba(255,220,0,0.18)' : 'rgba(0,0,0,0.55)';
     ctx.beginPath();
     ctx.roundRect(this.x - tw / 2 - pad, tagY - 13, tw + pad * 2, 13, 3);
     ctx.fill();
-    ctx.fillStyle = this.color;
-    ctx.fillText(this.name, this.x, tagY);
+    ctx.fillStyle = this._devMode ? '#ffe066' : this.color;
+    ctx.fillText(nameLabel, this.x, tagY);
 
     if (scaled) ctx.restore();
   }
