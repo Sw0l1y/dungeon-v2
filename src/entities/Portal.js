@@ -20,16 +20,17 @@ export class Portal {
     this._innerAngle = 0;   // inner arms rotate CW (counter)
     this._coreAngle  = 0;   // star-field inside the void
 
-    // Closing sequence — triggered once all death fragments are absorbed
-    this._age        = 0;
+    // Closing sequence — runs after ALL players have entered (not on soul debris)
     this._closing    = false;
     this._closeT     = 0;
     this._closeScale = 1;   // 1 → 0 during close
 
     // Room-advance callback (injected by GameScene at spawn time)
-    this.onEnter   = null;
+    this.onEnter    = null;
     this._triggered = false;
     this._triggerT  = 0;
+    // Multiplayer: track which player instances have pressed enter
+    this._enteredSet = new Set();
 
     this._particles = [];
     this._initParticles();
@@ -70,14 +71,9 @@ export class Portal {
     this._armAngle   += 0.55 * dt;
     this._innerAngle -= 0.95 * dt;
     this._coreAngle  += 0.25 * dt;
-    this._age        += dt;
 
-    // ── Closing sequence — shrink portal once all death fragments are absorbed ──
+    // ── Closing sequence — only after all players have triggered entry ────────
     const CLOSE_DUR = 1.4;
-    if (!this._closing && this._age > 2 && this.level._soulDebris.length === 0) {
-      this._closing = true;
-      this._closeT  = 0;
-    }
     if (this._closing) {
       this._closeT     += dt;
       const p           = Math.min(1, this._closeT / CLOSE_DUR);
@@ -117,16 +113,21 @@ export class Portal {
       }
     }
 
-    // ── Entry trigger — player in pull zone presses interact ────────────────
+    // ── Entry trigger — ALL alive players must press interact near the portal ──
     if (!this._triggered && this.onEnter) {
+      // Register any new player who steps up and presses interact
       for (const pl of this.level.players) {
-        if (!pl.alive) continue;
+        if (!pl.alive || this._enteredSet.has(pl)) continue;
         const dist = Math.hypot(this.x - pl.x, this.y - pl.y);
         if (dist < PULL_STRONG && pl.binding?.justPressed?.('interact')) {
-          this._triggered = true;
-          this._triggerT  = 0;
-          break;
+          this._enteredSet.add(pl);
         }
+      }
+      // Fire once every alive player has committed
+      const alive = this.level.players.filter(p => p.alive);
+      if (alive.length > 0 && alive.every(p => this._enteredSet.has(p))) {
+        this._triggered = true;
+        this._triggerT  = 0;
       }
     }
 
@@ -320,20 +321,36 @@ export class Portal {
       const ta = 0.62 + 0.32 * Math.sin(t / 210);
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'bottom';
+
       if (this._triggered) {
         // Fade in "entering" text during the 0.55s transition delay
-        const p = Math.min(1, this._triggerT / 0.55);
-        ctx.fillStyle = `rgba(255,245,255,${ta * p})`;
+        const prog = Math.min(1, this._triggerT / 0.55);
+        ctx.fillStyle = `rgba(255,245,255,${ta * prog})`;
         ctx.font      = 'bold 12px "Trebuchet MS", sans-serif';
         ctx.fillText('Entering the Void…', x, y - R - 14);
+
       } else if (this.onEnter) {
+        const alive    = this.level.players.filter(p => p.alive);
+        const entered  = alive.filter(p => this._enteredSet.has(p)).length;
+        const waiting  = alive.length - entered;
+
         ctx.fillStyle = `rgba(200,160,255,${ta})`;
         ctx.font      = 'bold 11px "Trebuchet MS", sans-serif';
         ctx.fillText('— THE VOID AWAITS —', x, y - R - 26);
-        ctx.font      = '10px "Trebuchet MS", sans-serif';
-        ctx.fillStyle = `rgba(180,140,255,${ta * 0.75})`;
-        ctx.fillText('[ E / O ]  enter', x, y - R - 12);
+
+        if (entered > 0 && waiting > 0) {
+          // Some players in, waiting for the rest
+          ctx.font      = '10px "Trebuchet MS", sans-serif';
+          ctx.fillStyle = `rgba(255,220,100,${ta * 0.9})`;
+          ctx.fillText(`Waiting for ${waiting} player${waiting > 1 ? 's' : ''}…`, x, y - R - 12);
+        } else {
+          ctx.font      = '10px "Trebuchet MS", sans-serif';
+          ctx.fillStyle = `rgba(180,140,255,${ta * 0.75})`;
+          ctx.fillText('[ E / O ]  enter', x, y - R - 12);
+        }
+
       } else {
+        // CLIENT portal (onEnter is a no-op) — still show the prompt
         ctx.fillStyle = `rgba(200,160,255,${ta})`;
         ctx.font      = 'bold 11px "Trebuchet MS", sans-serif';
         ctx.fillText('— THE VOID AWAITS —', x, y - R - 14);
