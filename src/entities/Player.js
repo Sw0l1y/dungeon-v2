@@ -389,7 +389,7 @@ export class Player {
       let base = Math.atan2(this._facingY, this._facingX);
       if (target) base = Math.atan2(target.y - this.y, target.x - this.x);
       const angle = base + spread;
-      this.level.addEntity(new HomingArrow(
+      const arrow = new HomingArrow(
         this.level,
         this.x + Math.cos(angle) * 12,
         this.y + Math.sin(angle) * 12,
@@ -397,7 +397,9 @@ export class Player {
         Math.sin(angle) * speed,
         this,
         target,
-      ));
+      );
+      if (this._devMode) arrow._noclip = true;
+      this.level.addEntity(arrow);
     }
   }
 
@@ -444,6 +446,7 @@ export class Player {
       }
       const proj = new Projectile(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
       if (this.game.state.upgrades?.ricochet) proj._canRicochet = true;
+      if (this._devMode) proj._noclip = true;
       this.level.addEntity(proj);
     }
   }

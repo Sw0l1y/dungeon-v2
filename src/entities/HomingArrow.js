@@ -67,7 +67,7 @@ export class HomingArrow extends Projectile {
     const col = Math.floor(this.x / ts);
     const row = Math.floor(this.y / ts);
     if (row < 0 || row >= map.length || col < 0 || col >= map[0].length || map[row][col] === 1 || map[row][col] === 2) {
-      this.level.removeEntity(this);
+      if (!this._noclip) this.level.removeEntity(this);
     }
   }
 

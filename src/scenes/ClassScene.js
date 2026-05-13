@@ -1,5 +1,7 @@
-import { Scene     } from './Scene.js';
-import { GameScene } from './GameScene.js';
+import { Scene            } from './Scene.js';
+import { GameScene        } from './GameScene.js';
+import { LobbyScene       } from './LobbyScene.js';
+import { OnlineLobbyScene } from './OnlineLobbyScene.js';
 
 const CLASSES = [
   {
@@ -108,13 +110,17 @@ export class ClassScene extends Scene {
     return { x: W / 2 - 110, y: 430, w: 220, h: 48 };
   }
 
+  _backBtn() {
+    return { x: 20, y: 16, w: 110, h: 36 };
+  }
+
   _hit({ x, y, w, h }, pt) {
     return pt && pt.x >= x && pt.x <= x + w && pt.y >= y && pt.y <= y + h;
   }
 
-  // All local players have a non-null selection
+  // All players (local AND remote) have a non-null selection
   get _allSelected() {
-    return this._localIdxs.every(i => this._selections[i] !== null);
+    return this._selections.every(s => s !== null);
   }
 
   // ── update ────────────────────────────────────────────────────────────────
@@ -125,6 +131,8 @@ export class ClassScene extends Scene {
 
     const role     = this.game.state.netRole ?? null;
     const isClient = role === 'client';
+
+    if (this.game.input.justPressed('Escape')) { this._goBack(); return; }
 
     // Host / local: Enter confirms when all selected
     if (!isClient && this._allSelected && this.game.input.justPressed('Enter')) {
@@ -137,6 +145,8 @@ export class ClassScene extends Scene {
   _handleClick(pt) {
     const role     = this.game.state.netRole ?? null;
     const isClient = role === 'client';
+
+    if (this._hit(this._backBtn(), pt)) { this._goBack(); return; }
 
     // START button — only host / local can press it
     if (!isClient && this._allSelected && this._hit(this._startBtn(), pt)) {
@@ -191,6 +201,15 @@ export class ClassScene extends Scene {
     this._finalize();
   }
 
+  _goBack() {
+    const role = this.game.state.netRole ?? null;
+    if (role === 'host' || role === 'client') {
+      this.game.scenes.switch(new OnlineLobbyScene(this.game));
+    } else {
+      this.game.scenes.switch(new LobbyScene(this.game));
+    }
+  }
+
   _finalize() {
     this.game.state.players = this.game.state.players.map((p, i) => ({
       ...p,
@@ -207,6 +226,20 @@ export class ClassScene extends Scene {
     const H = this.game.canvas.height;
     ctx.clearRect(0, 0, W, H);
 
+    // ── Back button ────────────────────────────────────────────────────────────
+    const backBtn   = this._backBtn();
+    const backHover = this._hit(backBtn, this._mouse);
+    ctx.fillStyle   = backHover ? 'rgba(140,243,255,0.10)' : 'rgba(255,255,255,0.04)';
+    ctx.beginPath(); ctx.roundRect(backBtn.x, backBtn.y, backBtn.w, backBtn.h, 6); ctx.fill();
+    ctx.strokeStyle = backHover ? 'rgba(140,243,255,0.50)' : 'rgba(255,255,255,0.14)';
+    ctx.lineWidth   = backHover ? 1.5 : 1;
+    ctx.beginPath(); ctx.roundRect(backBtn.x, backBtn.y, backBtn.w, backBtn.h, 6); ctx.stroke();
+    ctx.fillStyle   = backHover ? '#8cf3ff' : 'rgba(255,255,255,0.55)';
+    ctx.font        = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.textAlign   = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('← Back', backBtn.x + backBtn.w / 2, backBtn.y + backBtn.h / 2);
+
+    // ── Title ──────────────────────────────────────────────────────────────────
     ctx.fillStyle = '#8cf3ff';
     ctx.font = 'bold 36px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center';
@@ -299,9 +332,13 @@ export class ClassScene extends Scene {
     ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.font = '13px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    const localDone  = this._localIdxs.every(i => this._selections[i] !== null);
+    const remoteDone = this._remoteIdxs.every(i => this._selections[i] !== null);
     const hint = isClient
       ? 'Select a class for each of your players'
-      : (canStart ? 'Click START or press Enter' : 'All players must select a class');
+      : canStart
+        ? 'Click START or press Enter'
+        : (!localDone ? 'All local players must select a class' : 'Waiting for other players to choose…');
     ctx.fillText(hint, W / 2, H - 16);
   }
 
