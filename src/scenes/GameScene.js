@@ -106,12 +106,23 @@ export class GameScene extends Scene {
       };
     }
 
-    // Intercept death particle spawns so the host can relay them to the client
-    if (this._netRole === 'host') {
+    // Gold shards — world-space particles that get sucked into the exit portal.
+    // HOST/solo: collecting them increments game.state.gold.
+    // CLIENT:    visual-only; gold is synced via 'gd' field in state packets.
+    this._goldShards = [];
+
+    // Intercept death particle spawns:
+    //   HOST  — relay to client as 'ev' events AND spawn gold shards
+    //   solo  — just spawn gold shards (no relay needed)
+    //   client — handled separately in _applyHostState
+    if (this._netRole !== 'client') {
       const origSpawn = this.level.spawnDeathParticles.bind(this.level);
       this.level.spawnDeathParticles = (x, y, color, count) => {
         origSpawn(x, y, color, count);
-        this._pendingEvents.push({ k: 'd', x: Math.round(x), y: Math.round(y), c: color, n: count });
+        if (this._netRole === 'host') {
+          this._pendingEvents.push({ k: 'd', x: Math.round(x), y: Math.round(y), c: color, n: count });
+        }
+        this._spawnGoldShards(x, y, count);
       };
     }
 
@@ -205,15 +216,8 @@ export class GameScene extends Scene {
 
     this.level.update(dt);
 
-    // Award gold when enemies die (HOST / solo only — client defers to host)
-    if (this._netRole !== 'client') {
-      for (const e of this.level.entities) {
-        if (e.isEnemy && !e.alive && !e._goldAwarded) {
-          e._goldAwarded = true;
-          this.game.state.gold += e.isBoss ? 150 : 12;
-        }
-      }
-    }
+    // Gold shard physics — runs on all roles (client shards are visual-only)
+    if (this._goldShards.length > 0) this._updateGoldShards(dt);
 
     // Flush remote bindings on the HOST after level.update so justPressed flags
     // (including the new ability latch) are cleared for the next frame.
@@ -710,6 +714,8 @@ export class GameScene extends Scene {
       },
       // Buffered events (death particles, etc.) since last packet
       ev: this._pendingEvents.splice(0),
+      // Gold — synced so client counter matches host in real-time
+      gd: this.game.state.gold,
     };
   }
 
@@ -968,12 +974,18 @@ export class GameScene extends Scene {
       mergeProj(state.proj.ep ?? [], this._smoothProjEp, false);
     }
 
-    // FX events: spawn death particles on client's level for visual parity
+    // FX events: spawn death particles + visual gold shards on client
     if (state.ev) {
       for (const ev of state.ev) {
-        if (ev.k === 'd') this.level.spawnDeathParticles(ev.x, ev.y, ev.c, ev.n);
+        if (ev.k === 'd') {
+          this.level.spawnDeathParticles(ev.x, ev.y, ev.c, ev.n);
+          this._spawnGoldShards(ev.x, ev.y, ev.n);   // visual-only on client
+        }
       }
     }
+
+    // Sync gold counter from host (authoritative)
+    if (state.gd !== undefined) this.game.state.gold = state.gd;
 
     // Update remote wave state (used for HUD)
     if (state.wv) {
@@ -1006,6 +1018,9 @@ export class GameScene extends Scene {
     this.camera.applyTransform(ctx);
 
     this.level.draw(ctx);
+
+    // Gold shards — drawn on top of the map in world space
+    if (this._goldShards.length > 0) this._drawGoldShards(ctx);
 
     // Ghost enemies + projectiles (client only)
     if (this._netRole === 'client') {
@@ -1364,6 +1379,114 @@ export class GameScene extends Scene {
     ctx.lineCap = 'butt';
   }
 
+  // ── Gold shard system ────────────────────────────────────────────────────────
+
+  /**
+   * Spawn small gold diamond particles at the enemy death position.
+   * count is the death-particle count — used to infer enemy tier.
+   * Each shard carries a gold `value`; only counted on HOST/solo.
+   */
+  _spawnGoldShards(x, y, count) {
+    // Infer enemy tier from particle count (boss ~30, elite ~22, normal ~15)
+    const isBoss  = count >= 28;
+    const isElite = !isBoss && count >= 20;
+    const shards  = isBoss ? 12 : isElite ? 6 : 4;
+    const value   = isBoss ? 12 : isElite ? 5 : 3;  // per shard; totals: 144 / 30 / 12
+    for (let i = 0; i < shards; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 30 + Math.random() * 80;
+      this._goldShards.push({
+        x, y,
+        vx:    Math.cos(angle) * speed,
+        vy:    Math.sin(angle) * speed,
+        value,
+        size:   isBoss ? 4.5 : 3.0,
+        angle:  Math.random() * Math.PI * 2,
+        spin:   (Math.random() - 0.5) * 6,
+        life:   30 + Math.random() * 20,    // persists ~30-50 s
+      });
+    }
+  }
+
+  /** Advance gold shard physics each frame. */
+  _updateGoldShards(dt) {
+    const px = this._introCX;
+    const py = this._introCY;
+    const isClient = this._netRole === 'client';
+
+    for (let i = this._goldShards.length - 1; i >= 0; i--) {
+      const s = this._goldShards[i];
+      s.angle += s.spin * dt;
+      s.life  -= dt;
+
+      if (this._portalSpawned) {
+        // Suction: accelerate toward portal, speed proportional to inverse distance
+        const dx   = px - s.x;
+        const dy   = py - s.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        const pull = (300 / dist + 160) * dt;
+        s.vx += (dx / dist) * pull;
+        s.vy += (dy / dist) * pull;
+        // Cap speed so they don't overshoot at close range
+        const spd = Math.hypot(s.vx, s.vy);
+        if (spd > 550) { s.vx = s.vx / spd * 550; s.vy = s.vy / spd * 550; }
+        // Collect on arrival
+        if (dist < 14) {
+          if (!isClient) this.game.state.gold += s.value;
+          this._goldShards.splice(i, 1);
+          continue;
+        }
+      } else {
+        // Free drift: rapid deceleration + very gentle upward float
+        const fric = Math.pow(0.12, dt);   // ~12% velocity remaining after 1 s
+        s.vx *= fric;
+        s.vy  = s.vy * fric - 6 * dt;     // slight upward creep
+      }
+
+      s.x += s.vx * dt;
+      s.y += s.vy * dt;
+
+      // Expire shards that somehow outlived even the fight (safety valve)
+      if (s.life <= 0) this._goldShards.splice(i, 1);
+    }
+  }
+
+  /** Draw gold diamond shards in world space. */
+  _drawGoldShards(ctx) {
+    const t = Date.now() * 0.001;
+    ctx.save();
+    for (const s of this._goldShards) {
+      const pulse = 0.75 + 0.25 * Math.sin(t * 5.2 + s.x * 0.08);
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.angle);
+      ctx.globalAlpha  = pulse * 0.92;
+      ctx.fillStyle    = '#ffd166';
+      ctx.shadowColor  = 'rgba(255,209,102,0.9)';
+      ctx.shadowBlur   = 7;
+      const sz = s.size;
+      ctx.beginPath();
+      ctx.moveTo(0,   -sz);
+      ctx.lineTo(sz * 0.55,  0);
+      ctx.lineTo(0,    sz);
+      ctx.lineTo(-sz * 0.55, 0);
+      ctx.closePath();
+      ctx.fill();
+      // White highlight facet
+      ctx.globalAlpha  = pulse * 0.55;
+      ctx.fillStyle    = '#fff8d0';
+      ctx.beginPath();
+      ctx.moveTo(0, -sz);
+      ctx.lineTo(sz * 0.28, -sz * 0.35);
+      ctx.lineTo(0,  sz * 0.2);
+      ctx.lineTo(-sz * 0.28, -sz * 0.35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
   _drawNetOverlay(ctx) {
     const W = this.game.canvas.width;
     const role = this._netRole === 'host' ? 'HOST' : 'CLIENT';
@@ -1487,15 +1610,17 @@ export class GameScene extends Scene {
       ctx.fillText(this._netRole === 'host' ? '⬡ host' : '⬡ client', 16, 34);
     }
 
-    // Top-right: gold counter (only shown when gold has been earned)
-    const gold = this.game.state.gold;
-    if (gold !== undefined && gold > 0) {
-      ctx.fillStyle    = '#ffd166';
-      ctx.font         = 'bold 13px "Trebuchet MS", sans-serif';
-      ctx.textAlign    = 'right';
-      ctx.textBaseline = 'top';
-      ctx.fillText(`◈ ${gold}`, W - 16, 16);
-    }
+    // Top-right: gold counter — always visible
+    const gold = this.game.state.gold ?? 0;
+    ctx.font         = 'bold 13px "Trebuchet MS", sans-serif';
+    ctx.textAlign    = 'right';
+    ctx.textBaseline = 'top';
+    const goldText = `◈ ${gold}`;
+    const goldTw   = ctx.measureText(goldText).width;
+    ctx.fillStyle   = 'rgba(8,14,26,0.65)';
+    ctx.beginPath(); ctx.roundRect(W - goldTw - 26, 10, goldTw + 16, 20, 4); ctx.fill();
+    ctx.fillStyle   = gold > 0 ? '#ffd166' : 'rgba(255,209,102,0.32)';
+    ctx.fillText(goldText, W - 16, 14);
 
     // Top-center: revive prompt for alive players near a downed ally
     const REVIVE_RANGE = 70;
