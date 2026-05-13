@@ -22,6 +22,33 @@ export class GameScene extends Scene {
     this.waves  = new WaveManager(this.level);
     this._portalSpawned = false;
 
+    // ── Net overlay (Y to toggle) ─────────────────────────────────────────────
+    this._netOverlayOn    = false;
+    this._netPingRtt      = null;   // smoothed app-level RTT (ms)
+    this._netPingTimer    = 0;      // counts up; ping sent every 1 s
+    this._netPingSeq      = 0;
+    this._netPingMap      = new Map();   // seq → performance.now() at send
+    this._netRxPkts       = 0;      // raw counters for current 1 s window
+    this._netRxBytes      = 0;
+    this._netTxPkts       = 0;
+    this._netTxBytes      = 0;
+    this._netStatTimer    = 0;
+    this._netDispRx       = { pkts: 0, kbps: 0 };   // display (updated each second)
+    this._netDispTx       = { pkts: 0, kbps: 0 };
+    // Packet-loss / jitter (CLIENT only — tracks gs sequence numbers)
+    this._netStateSeq     = 0;      // HOST: outgoing counter stamped on every gs packet
+    this._netExpSeq       = -1;     // CLIENT: next expected gs seq
+    this._netGsRecv       = 0;      // gs packets received this window
+    this._netGsLost       = 0;      // seq gaps detected this window
+    this._netLossPct      = 0;      // display value (%)
+    this._netLastGsTime   = 0;      // performance.now() of last gs packet (jitter)
+    this._netJitter       = 0;      // mean-absolute-deviation of inter-packet gaps (ms)
+    this._netJitterBuf    = [];     // rolling samples
+    // WebRTC stack stats: polled every 3 s (async, non-blocking)
+    this._netWrtcType     = '…';    // 'relay' | 'srflx' | 'host' | 'prflx' | '?'
+    this._netWrtcRtt      = null;   // ms from WebRTC candidate-pair stats
+    this._netWrtcTimer    = 0;      // fires immediately on first tick
+
     // ── Network state (null = local play) ─────────────────────────────────────
     this._net             = this.game.state.netSession     ?? null;
     this._netRole         = this.game.state.netRole        ?? null; // 'host'|'client'|null
@@ -136,6 +163,11 @@ export class GameScene extends Scene {
     if (this.game.input.justPressed('Backquote')) {
       this.game.scenes.push(new PauseScene(this.game, this));
       return;
+    }
+
+    // Y — toggle net overlay (only meaningful during online play)
+    if (this.game.input.justPressed('KeyY') && this._netRole) {
+      this._netOverlayOn = !this._netOverlayOn;
     }
 
     this.game.state.stats.timeElapsed += dt;
@@ -282,15 +314,67 @@ export class GameScene extends Scene {
       if (this._netRole === 'host') {
         if (this._sendTimer >= 0.05) {     // 20 hz state
           this._sendTimer = 0;
-          this._net.send(this._buildStatePacket());
+          const pkt = this._buildStatePacket();
+          const raw = JSON.stringify(pkt);
+          this._netTxPkts++;
+          this._netTxBytes += raw.length;
+          this._net.send(pkt);
         }
       } else {
         if (this._sendTimer >= 0.016) {   // ~60 hz input — matches frame rate
           this._sendTimer = 0;
-          this._net.send(this._buildInputPacket());
+          const pkt = this._buildInputPacket();
+          const raw = JSON.stringify(pkt);
+          this._netTxPkts++;
+          this._netTxBytes += raw.length;
+          this._net.send(pkt);
         }
         // Flush remote bindings (clears justPressed after level.update reads them)
         for (const rb of this._remoteBindings) rb.flush();
+      }
+
+      // ── Net-stat rolling window (1 s) ───────────────────────────────────────
+      this._netStatTimer += dt;
+      if (this._netStatTimer >= 1) {
+        this._netDispRx = {
+          pkts: this._netRxPkts,
+          kbps: +(this._netRxBytes / 1024).toFixed(1),
+        };
+        this._netDispTx = {
+          pkts: this._netTxPkts,
+          kbps: +(this._netTxBytes / 1024).toFixed(1),
+        };
+        // Loss % over this window
+        if (this._netGsRecv + this._netGsLost > 0) {
+          this._netLossPct = +((this._netGsLost / (this._netGsRecv + this._netGsLost)) * 100).toFixed(1);
+        }
+        this._netRxPkts = this._netRxBytes = 0;
+        this._netTxPkts = this._netTxBytes = 0;
+        this._netGsRecv = this._netGsLost  = 0;
+        this._netStatTimer = 0;
+      }
+
+      // ── Ping (app-level RTT) — sent every 1 s ───────────────────────────────
+      this._netPingTimer += dt;
+      if (this._netPingTimer >= 1) {
+        this._netPingTimer = 0;
+        const seq = this._netPingSeq++;
+        this._netPingMap.set(seq, performance.now());
+        // Prune stale pings (> 5 s old)
+        for (const [k, t] of this._netPingMap) {
+          if (performance.now() - t > 5000) this._netPingMap.delete(k);
+        }
+        this._net.send({ t: 'ping', sq: seq });
+      }
+
+      // ── WebRTC stats (polled every 3 s, non-blocking) ───────────────────────
+      this._netWrtcTimer += dt;
+      if (this._netWrtcTimer >= 3) {
+        this._netWrtcTimer = 0;
+        this._net.getWebRTCStats?.().then(s => {
+          this._netWrtcType = s.type;
+          this._netWrtcRtt  = s.rtt;
+        });
       }
     }
   }
@@ -528,6 +612,7 @@ export class GameScene extends Scene {
 
     return {
       t: 'gs',
+      sq: this._netStateSeq++,
       p: ps.map(pl => ({
         x:  pl.x,
         y:  pl.y,
@@ -620,6 +705,29 @@ export class GameScene extends Scene {
 
   /** Handle an incoming network message. */
   _onNetMsg(data, peerId) {
+    // ── Net stats: count every incoming packet ───────────────────────────────
+    this._netRxPkts++;
+    this._netRxBytes += JSON.stringify(data).length;
+
+    // ── Ping / pong ──────────────────────────────────────────────────────────
+    if (data.t === 'ping') {
+      // Echo immediately — don't go through the send timer
+      this._net.send({ t: 'pong', sq: data.sq });
+      return;
+    }
+    if (data.t === 'pong') {
+      const sent = this._netPingMap.get(data.sq);
+      if (sent !== undefined) {
+        const sample = performance.now() - sent;
+        this._netPingMap.delete(data.sq);
+        // Exponential moving average (α = 0.25) — damps noise while tracking trend
+        this._netPingRtt = this._netPingRtt === null
+          ? sample
+          : this._netPingRtt * 0.75 + sample * 0.25;
+      }
+      return;
+    }
+
     if (this._netRole === 'host') {
       // Client sends { t:'in', p:[...inputs for this client's local players] }
       if (data.t === 'in' && data.p) {
@@ -639,7 +747,32 @@ export class GameScene extends Scene {
         }
       }
     } else {
-      if (data.t === 'gs') this._applyHostState(data);
+      if (data.t === 'gs') {
+        this._applyHostState(data);
+
+        // ── Packet-loss & jitter tracking (CLIENT) ─────────────────────────
+        if (data.sq !== undefined) {
+          const now = performance.now();
+          // Loss: count gaps in sequence numbers
+          if (this._netExpSeq === -1) {
+            this._netExpSeq = data.sq + 1;
+          } else {
+            const gap = data.sq - this._netExpSeq;
+            if (gap > 0) this._netGsLost += gap;   // missing packets
+            this._netExpSeq = data.sq + 1;
+          }
+          this._netGsRecv++;
+          // Jitter: track inter-arrival time variance
+          if (this._netLastGsTime > 0) {
+            const interval = now - this._netLastGsTime;
+            this._netJitterBuf.push(interval);
+            if (this._netJitterBuf.length > 20) this._netJitterBuf.shift();
+            const mean = this._netJitterBuf.reduce((a, b) => a + b, 0) / this._netJitterBuf.length;
+            this._netJitter = +(this._netJitterBuf.reduce((a, b) => a + Math.abs(b - mean), 0) / this._netJitterBuf.length).toFixed(1);
+          }
+          this._netLastGsTime = now;
+        }
+      }
 
       // Host explicitly signals game-over before switching to DeathScene.
       // The normal "all players dead" check in update() runs BEFORE the network
@@ -858,6 +991,9 @@ export class GameScene extends Scene {
     ctx.restore();
 
     this._drawHud(ctx);
+
+    // Net overlay (Y to toggle, online only)
+    if (this._netOverlayOn && this._netRole) this._drawNetOverlay(ctx);
 
     // Disconnect overlay
     if (this._netDisconnected) this._drawDisconnect(ctx);
@@ -1194,6 +1330,97 @@ export class GameScene extends Scene {
       ctx.beginPath(); ctx.arc(ex, ey, 3.15, 0, Math.PI * 2); ctx.fill();
     }
     ctx.lineCap = 'butt';
+  }
+
+  _drawNetOverlay(ctx) {
+    const W = this.game.canvas.width;
+    const role = this._netRole === 'host' ? 'HOST' : 'CLIENT';
+
+    // Build rows
+    const rows = [];
+    rows.push({ label: `NET  [${role}]`, value: 'Y to hide', dim: true });
+    rows.push(null); // spacer
+
+    // App-level ping
+    const ping = this._netPingRtt !== null ? `${Math.round(this._netPingRtt)} ms` : '…';
+    const pingColor = this._netPingRtt === null ? '#aaa'
+      : this._netPingRtt < 60  ? '#7fff7f'
+      : this._netPingRtt < 120 ? '#ffd166'
+      : '#ff6b6b';
+    rows.push({ label: 'Ping  (app)', value: ping, color: pingColor });
+
+    // WebRTC stack RTT (more accurate, polled every 3 s)
+    const wRtt = this._netWrtcRtt !== null ? `${this._netWrtcRtt} ms` : '…';
+    rows.push({ label: 'RTT  (WebRTC)', value: wRtt });
+
+    // Connection type — this is the KEY relay-vs-direct indicator
+    const typeLabel = {
+      relay:  'RELAY  ⚠ thru server',
+      srflx:  'srflx  (P2P / NAT)',
+      host:   'host   (LAN / direct)',
+      prflx:  'prflx  (P2P)',
+      '…':    '…',
+      '?':    '?',
+    }[this._netWrtcType] ?? this._netWrtcType;
+    const typeColor = this._netWrtcType === 'relay' ? '#ff9944'
+      : this._netWrtcType === '…' || this._netWrtcType === '?' ? '#aaa'
+      : '#7fff7f';
+    rows.push({ label: 'Conn type', value: typeLabel, color: typeColor });
+
+    rows.push(null);
+
+    // Packet loss + jitter (CLIENT only — measures incoming gs stream)
+    if (this._netRole === 'client') {
+      const lossColor = this._netLossPct === 0 ? '#7fff7f'
+        : this._netLossPct < 3 ? '#ffd166' : '#ff6b6b';
+      rows.push({ label: 'Pkt loss', value: `${this._netLossPct}%`, color: lossColor });
+      rows.push({ label: 'Jitter', value: this._netJitter > 0 ? `${this._netJitter} ms` : '…' });
+      rows.push(null);
+    }
+
+    // Throughput
+    rows.push({ label: 'RX', value: `${this._netDispRx.pkts} pkt/s  ${this._netDispRx.kbps} KB/s` });
+    rows.push({ label: 'TX', value: `${this._netDispTx.pkts} pkt/s  ${this._netDispTx.kbps} KB/s` });
+
+    // DataChannel buffer (congestion indicator)
+    const buf = this._net?.getBufferedAmount?.() ?? 0;
+    const bufStr = buf < 1024 ? `${buf} B` : `${(buf / 1024).toFixed(1)} KB`;
+    const bufColor = buf < 8192 ? '#7fff7f' : buf < 65536 ? '#ffd166' : '#ff6b6b';
+    rows.push({ label: 'DC buffer', value: bufStr, color: bufColor });
+
+    // ── Draw ──────────────────────────────────────────────────────────────────
+    const PX = 10, PY = 10;
+    const ROW_H = 17, PAD = 10;
+    const totalH = rows.length * ROW_H + PAD * 2;
+    const boxW   = 268;
+    const bx = W - boxW - PX;
+    const by = PY;
+
+    ctx.save();
+    ctx.fillStyle   = 'rgba(6,10,24,0.84)';
+    ctx.strokeStyle = 'rgba(140,243,255,0.2)';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, boxW, totalH, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.font      = '12px "Trebuchet MS", monospace';
+    ctx.textBaseline = 'middle';
+
+    let y = by + PAD + ROW_H / 2;
+    for (const row of rows) {
+      if (!row) { y += ROW_H; continue; }
+      const { label, value, color, dim } = row;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = dim ? 'rgba(140,243,255,0.5)' : 'rgba(255,255,255,0.45)';
+      ctx.fillText(label, bx + PAD, y);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = color ?? 'rgba(255,255,255,0.9)';
+      ctx.fillText(value, bx + boxW - PAD, y);
+      y += ROW_H;
+    }
+    ctx.restore();
   }
 
   _drawDisconnect(ctx) {

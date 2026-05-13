@@ -104,6 +104,52 @@ export class NetSession {
       .map(([id]) => id);
   }
 
+  /** Returns total bytes queued to send across all open DataChannels (congestion indicator). */
+  getBufferedAmount() {
+    let total = 0;
+    for (const { dc } of this._peers.values()) {
+      if (dc?.readyState === 'open') total += dc.bufferedAmount;
+    }
+    if (this._dc?.readyState === 'open') total += this._dc.bufferedAmount;
+    return total;
+  }
+
+  /**
+   * Async: returns ICE candidate-pair stats for the first active RTCPeerConnection.
+   * { type: 'relay'|'srflx'|'host'|'prflx'|'?', rtt: ms|null }
+   * type === 'relay' means all traffic is being routed through a TURN server.
+   */
+  async getWebRTCStats() {
+    const pc = this._pc ?? [...this._peers.values()][0]?.pc;
+    if (!pc) return { type: '?', rtt: null };
+    try {
+      const report = await pc.getStats();
+      let pair = null;
+      for (const s of report.values()) {
+        if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded') {
+          pair = s; break;
+        }
+      }
+      if (!pair) {
+        // Fallback: take the highest-priority succeeded pair even if not marked nominated
+        for (const s of report.values()) {
+          if (s.type === 'candidate-pair' && s.state === 'succeeded') {
+            if (!pair || s.priority > pair.priority) pair = s;
+          }
+        }
+      }
+      if (!pair) return { type: '?', rtt: null };
+      const remote = report.get(pair.remoteCandidateId);
+      const type   = remote?.candidateType ?? '?';
+      const rtt    = pair.currentRoundTripTime != null
+        ? Math.round(pair.currentRoundTripTime * 1000)
+        : null;
+      return { type, rtt };
+    } catch {
+      return { type: '?', rtt: null };
+    }
+  }
+
   /** Number of currently-open peer connections. */
   get connectedPeerCount() {
     if (this._peers.size > 0)
