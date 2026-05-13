@@ -6,6 +6,7 @@ import { WaveManager    } from '../systems/WaveManager.js';
 import { DeathScene     } from './DeathScene.js';
 import { PauseScene     } from './PauseScene.js';
 import { TitleScene     } from './TitleScene.js';
+import { ShopScene, defaultUpgrades } from './ShopScene.js';
 import { Portal         } from '../entities/Portal.js';
 import { Projectile     } from '../entities/Projectile.js';
 import { SwordSwing     } from '../entities/SwordSwing.js';
@@ -13,10 +14,12 @@ import { EnemyProjectile} from '../entities/EnemyProjectile.js';
 
 export class GameScene extends Scene {
   onEnter() {
-    // Load the room for the current campaign index, fall back to built-in Level1
+    // Load the room for the current campaign index, fall back to built-in Level1.
+    // Shop rooms (type:'shop') have no tile data — they route to ShopScene instead,
+    // but guard here just in case the roomIndex lands on one unexpectedly.
     const roomIdx = this.game.state.roomIndex ?? 0;
     const roomCfg = this.game.maps?.campaign?.[roomIdx];
-    this.level = roomCfg ? new DynamicLevel(this.game, roomCfg) : new Level1(this.game);
+    this.level = (roomCfg && roomCfg.type !== 'shop') ? new DynamicLevel(this.game, roomCfg) : new Level1(this.game);
     this.camera = new Camera(this.game.canvas.width, this.game.canvas.height);
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
@@ -137,6 +140,10 @@ export class GameScene extends Scene {
     // Players start invisible (grow in with the portal)
     for (const pl of this.level.players) pl.spawnScale = 0;
 
+    // Gold + upgrades — persist across rooms; initialize on first entry only
+    this.game.state.gold     = this.game.state.gold     ?? 0;
+    this.game.state.upgrades = this.game.state.upgrades ?? defaultUpgrades();
+
     // Init run stats (reset each new game)
     this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
   }
@@ -197,6 +204,16 @@ export class GameScene extends Scene {
     }
 
     this.level.update(dt);
+
+    // Award gold when enemies die (HOST / solo only — client defers to host)
+    if (this._netRole !== 'client') {
+      for (const e of this.level.entities) {
+        if (e.isEnemy && !e.alive && !e._goldAwarded) {
+          e._goldAwarded = true;
+          this.game.state.gold += e.isBoss ? 150 : 12;
+        }
+      }
+    }
 
     // Flush remote bindings on the HOST after level.update so justPressed flags
     // (including the new ability latch) are cleared for the next frame.
@@ -260,9 +277,16 @@ export class GameScene extends Scene {
         const game     = this.game;
         const campaign = game.maps?.campaign;
         const nextIdx  = (game.state.roomIndex ?? 0) + 1;
+        const nextRoom = campaign?.[nextIdx];
+
+        // Tell client to follow (fixes existing bug where client stayed behind)
+        if (this._net) {
+          this._net.send({ t: 'roomNext', roomIdx: nextIdx });
+        }
+
         if (campaign && nextIdx < campaign.length) {
           game.state.roomIndex = nextIdx;
-          game.scenes.switch(new GameScene(game));
+          game.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(game) : new GameScene(game));
         } else {
           // Campaign complete — reset and return to title
           game.state.roomIndex = 0;
@@ -781,6 +805,23 @@ export class GameScene extends Scene {
       if (data.t === 'gameover') {
         this.game.scenes.switch(new DeathScene(this.game));
       }
+
+      // Host portal transition — client follows immediately (server-authoritative).
+      // This fixes the pre-existing bug where the client never received the room-advance
+      // signal and stayed frozen in the old GameScene after the host moved on.
+      if (data.t === 'roomNext') {
+        const g        = this.game;
+        const campaign = g.maps?.campaign;
+        const nextIdx  = data.roomIdx;
+        if (!campaign || nextIdx >= campaign.length) {
+          g.state.roomIndex = 0;
+          g.scenes.switch(new TitleScene(g));
+        } else {
+          g.state.roomIndex = nextIdx;
+          const nextRoom = campaign[nextIdx];
+          g.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(g) : new GameScene(g));
+        }
+      }
     }
   }
 
@@ -943,21 +984,12 @@ export class GameScene extends Scene {
         bd:  !!state.wv.bd,
         cd:  state.wv.cd,
       };
-      // Spawn portal once host flags boss defeated
+      // Spawn portal once host flags boss defeated.
+      // onEnter is left empty — the actual room transition is driven by the
+      // 'roomNext' message from the host, making it server-authoritative.
       if (this._remoteWave.bd && !this._portalSpawned) {
         const portal = new Portal(this.level, this._introCX, this._introCY);
-        portal.onEnter = () => {
-          const game    = this.game;
-          const campaign = game.maps?.campaign;
-          const nextIdx  = (game.state.roomIndex ?? 0) + 1;
-          if (campaign && nextIdx < campaign.length) {
-            game.state.roomIndex = nextIdx;
-            game.scenes.switch(new GameScene(game));
-          } else {
-            game.state.roomIndex = 0;
-            game.scenes.switch(new TitleScene(game));
-          }
-        };
+        portal.onEnter = () => {}; // visual beacon only; 'roomNext' drives the transition
         this.level.addEntity(portal);
         this._portalSpawned = true;
       }
@@ -1453,6 +1485,16 @@ export class GameScene extends Scene {
       ctx.fillStyle = 'rgba(140,243,255,0.45)';
       ctx.font = '11px "Trebuchet MS", sans-serif';
       ctx.fillText(this._netRole === 'host' ? '⬡ host' : '⬡ client', 16, 34);
+    }
+
+    // Top-right: gold counter (only shown when gold has been earned)
+    const gold = this.game.state.gold;
+    if (gold !== undefined && gold > 0) {
+      ctx.fillStyle    = '#ffd166';
+      ctx.font         = 'bold 13px "Trebuchet MS", sans-serif';
+      ctx.textAlign    = 'right';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`◈ ${gold}`, W - 16, 16);
     }
 
     // Top-center: revive prompt for alive players near a downed ally

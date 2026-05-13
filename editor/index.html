@@ -56,6 +56,24 @@
     .tl-btn:hover { background: rgba(140,243,255,.1); border-color: var(--accent); color: var(--accent); }
     .tl-btn.load { border-color: rgba(76,255,176,.25); color: rgba(76,255,176,.6); background: rgba(76,255,176,.04); }
     .tl-btn.load:hover { border-color: var(--green); color: var(--green); background: rgba(76,255,176,.1); }
+    .tl-btn.shop { border-color: rgba(255,209,102,.28); color: rgba(255,209,102,.65); background: rgba(255,209,102,.04); }
+    .tl-btn.shop:hover { border-color: #ffd166; color: #ffd166; background: rgba(255,209,102,.10); }
+
+    /* Shop room cards in timeline */
+    .room-card.shop-room { border-color: rgba(255,209,102,.28); }
+    .room-card.shop-room:hover { border-color: rgba(255,209,102,.55); background: rgba(255,209,102,.06); }
+    .room-card.shop-room.active { border-color: #ffd166; background: rgba(255,209,102,.10); }
+    .room-card.shop-room .room-name { color: #ffd166; }
+    .room-card.shop-room .room-badge { font-size: 11px; flex-shrink: 0; }
+
+    /* Shop placeholder panel (shown instead of canvas + toolbox) */
+    #shop-placeholder { display: none; flex-direction: column; align-items: center; justify-content: center; flex: 1; gap: 14px; }
+    #shop-placeholder .sp-icon { font-size: 52px; line-height: 1; opacity: 0.55; color: #ffd166; }
+    #shop-placeholder .sp-name-row { display: flex; align-items: center; gap: 10px; }
+    #shop-placeholder .sp-name-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    #shop-placeholder .sp-name-input { padding: 5px 9px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,209,102,.3); border-radius: 6px; color: #ffd166; font-family: inherit; font-size: 13px; font-weight: 700; outline: none; width: 200px; }
+    #shop-placeholder .sp-name-input:focus { border-color: #ffd166; }
+    #shop-placeholder .sp-hint { font-size: 11px; color: var(--muted); text-align: center; max-width: 300px; line-height: 1.6; }
 
     /* ── Room library modal ───────────────────────────────────────────────── */
     #library-modal .modal { width: 520px; max-height: 80vh; display: flex; flex-direction: column; padding: 20px 20px 0; }
@@ -231,8 +249,9 @@
       <div id="timeline-header">Campaign Rooms</div>
       <div id="room-list"></div>
       <div id="timeline-footer">
-        <button class="tl-btn" id="add-room-btn">＋ New</button>
-        <button class="tl-btn load" id="load-room-btn">↓ Library</button>
+        <button class="tl-btn" id="add-room-btn">＋ Room</button>
+        <button class="tl-btn shop" id="add-shop-btn">◈ Shop</button>
+        <button class="tl-btn load" id="load-room-btn">↓ Lib</button>
       </div>
     </aside>
 
@@ -240,6 +259,19 @@
     <div id="canvas-area">
       <div id="canvas-wrap">
         <canvas id="editor-canvas"></canvas>
+      </div>
+      <!-- Shown instead of canvas when a shop room is selected -->
+      <div id="shop-placeholder">
+        <div class="sp-icon">◈</div>
+        <div class="sp-name-row">
+          <span class="sp-name-label">Shop name:</span>
+          <input class="sp-name-input" id="shop-name-input" type="text" maxlength="32" placeholder="The Armory" />
+        </div>
+        <div class="sp-hint">
+          This is a shop room — no tiles to paint.<br>
+          Players spend gold earned in combat to buy upgrades.<br>
+          Drag to reorder it anywhere in the campaign timeline.
+        </div>
       </div>
     </div>
 
@@ -747,7 +779,7 @@ function resizeCanvas(room) { canvas.width = room.cols * TILE_PX; canvas.height 
 
 function render() {
   const room = state.campaign[activeRoom];
-  if (!room) return;
+  if (!room || room.type === 'shop') return;
   const { floor, wall, destructible } = room.tileColors ?? { floor:'#22304a', wall:'#1a2340', destructible:'#1a2340' };
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   for (let r = 0; r < room.rows; r++) {
@@ -976,13 +1008,18 @@ document.getElementById('add-boss-btn').addEventListener('click',()=>{
 function buildTimeline() {
   roomList.innerHTML='';
   state.campaign.forEach((room,i)=>{
+    const isShop=room.type==='shop';
     const card=document.createElement('div');
-    card.className='room-card'+(i===activeRoom?' active':'');
+    card.className='room-card'+(isShop?' shop-room':'')+(i===activeRoom?' active':'');
     card.dataset.roomId=room.id;
     card.draggable=true;
-    card.innerHTML=`<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="save-room-btn" title="Save to library">💾</button><button class="del-btn" title="Remove from campaign">✕</button>`;
+    if(isShop){
+      card.innerHTML=`<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-badge">◈</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="del-btn" title="Remove from campaign">✕</button>`;
+    } else {
+      card.innerHTML=`<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="save-room-btn" title="Save to library">💾</button><button class="del-btn" title="Remove from campaign">✕</button>`;
+      card.querySelector('.save-room-btn').addEventListener('click',e=>{ e.stopPropagation(); saveRoomToLibrary(i); });
+    }
     card.addEventListener('click',e=>{ if(!e.target.classList.contains('del-btn')&&!e.target.classList.contains('save-room-btn')) selectRoom(i); });
-    card.querySelector('.save-room-btn').addEventListener('click',e=>{ e.stopPropagation(); saveRoomToLibrary(i); });
     card.querySelector('.del-btn').addEventListener('click',e=>{ e.stopPropagation(); deleteRoom(i); });
     card.addEventListener('dragstart',e=>{ dragSrc=i; e.dataTransfer.effectAllowed='move'; setTimeout(()=>card.style.opacity='.4',0); });
     card.addEventListener('dragend',()=>{ card.style.opacity=''; document.querySelectorAll('.room-card').forEach(c=>c.classList.remove('drag-over')); });
@@ -995,8 +1032,18 @@ function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace
 function selectRoom(i){
   activeRoom=i; openWave=-1;
   const room=state.campaign[i];
-  nameInput.value=room.name; colsInput.value=room.cols; rowsInput.value=room.rows;
-  resizeCanvas(room); buildTimeline(); syncColorPickers(); buildWaveList(); updateUndoBtn(); render();
+  buildTimeline(); updateUndoBtn();
+  const isShop=room.type==='shop';
+  // Toggle between canvas editing (normal rooms) and shop placeholder
+  document.getElementById('canvas-wrap').style.display      = isShop ? 'none' : '';
+  document.getElementById('shop-placeholder').style.display = isShop ? 'flex' : 'none';
+  document.getElementById('toolbox').style.display          = isShop ? 'none' : '';
+  if(isShop){
+    document.getElementById('shop-name-input').value=room.name||'The Armory';
+  } else {
+    nameInput.value=room.name; colsInput.value=room.cols; rowsInput.value=room.rows;
+    resizeCanvas(room); syncColorPickers(); buildWaveList(); render();
+  }
 }
 function deleteRoom(i){
   if(state.campaign.length<=1){ showToast('Cannot delete last room'); return; }
@@ -1072,12 +1119,13 @@ window.addEventListener('keydown',e=>{
 document.getElementById('btn-undo').addEventListener('click',undo);
 
 // ── Room name ─────────────────────────────────────────────────────────────
-nameInput.addEventListener('input',()=>{ const room=state.campaign[activeRoom]; if(room){ room.name=nameInput.value||'Unnamed'; buildTimeline(); } });
+nameInput.addEventListener('input',()=>{ const room=state.campaign[activeRoom]; if(room&&room.type!=='shop'){ room.name=nameInput.value||'Unnamed'; buildTimeline(); } });
 verInput.addEventListener('input',()=>{ state.mapVersion=verInput.value; verDisplay.textContent=state.mapVersion; });
 
 // ── Resize ────────────────────────────────────────────────────────────────
 document.getElementById('apply-resize').addEventListener('click',()=>{
   const room=state.campaign[activeRoom];
+  if(room?.type==='shop') return;
   const newCols=Math.max(10,Math.min(60,parseInt(colsInput.value)||room.cols));
   const newRows=Math.max(8,Math.min(40,parseInt(rowsInput.value)||room.rows));
   pushUndo();
@@ -1103,15 +1151,30 @@ document.getElementById('add-room-btn').addEventListener('click',()=>{
   selectRoom(state.campaign.length-1); showToast('Room added');
 });
 
+// ── Add shop room ─────────────────────────────────────────────────────────
+document.getElementById('add-shop-btn').addEventListener('click',()=>{
+  state.campaign.push({ id:genId(), name:'The Armory', type:'shop' });
+  selectRoom(state.campaign.length-1); showToast('Shop room added');
+});
+
+// ── Shop name input sync ─────────────────────────────────────────────────
+document.getElementById('shop-name-input').addEventListener('input', e=>{
+  const room=state.campaign[activeRoom];
+  if(room?.type==='shop'){ room.name=e.target.value||'The Armory'; buildTimeline(); }
+});
+
 // ── Serialise ─────────────────────────────────────────────────────────────
 function buildJSON(){
   return JSON.stringify({
     mapVersion: state.mapVersion,
-    campaign: state.campaign.map(r=>({
-      id:r.id, name:r.name, cols:r.cols, rows:r.rows, tileSize:r.tileSize??40,
-      playerSpawn:{...r.playerSpawn}, tileColors:{...r.tileColors},
-      waves:r.waves.map(w=>({...w})), tiles:r.tiles.map(row=>[...row]),
-    })),
+    campaign: state.campaign.map(r=>{
+      if(r.type==='shop') return { id:r.id, name:r.name, type:'shop' };
+      return {
+        id:r.id, name:r.name, cols:r.cols, rows:r.rows, tileSize:r.tileSize??40,
+        playerSpawn:{...r.playerSpawn}, tileColors:{...r.tileColors},
+        waves:r.waves.map(w=>({...w})), tiles:r.tiles.map(row=>[...row]),
+      };
+    }),
   },null,2);
 }
 
@@ -1124,14 +1187,17 @@ function loadJSON(text){
   let data; try{ data=JSON.parse(text); } catch{ showToast('Invalid JSON','error'); return; }
   if(!data.campaign?.length){ showToast('No campaign data found','error'); return; }
   state.mapVersion=data.mapVersion??'map-v1.0';
-  state.campaign=data.campaign.map(r=>({
-    id:r.id||genId(), name:r.name||'Room',
-    cols:r.cols||r.tiles[0].length, rows:r.rows||r.tiles.length, tileSize:r.tileSize||40,
-    playerSpawn:r.playerSpawn?{...r.playerSpawn}:{col:Math.floor((r.cols||30)/2),row:Math.floor((r.rows||17)/2)},
-    tileColors:r.tileColors?{...r.tileColors}:{floor:'#22304a',wall:'#1a2340',destructible:'#1a2340'},
-    waves:r.waves?r.waves.map(normaliseBossWave):defaultWaves(),
-    tiles:r.tiles.map(row=>[...row]),
-  }));
+  state.campaign=data.campaign.map(r=>{
+    if(r.type==='shop') return { id:r.id||genId(), name:r.name||'The Armory', type:'shop' };
+    return {
+      id:r.id||genId(), name:r.name||'Room',
+      cols:r.cols||r.tiles[0].length, rows:r.rows||r.tiles.length, tileSize:r.tileSize||40,
+      playerSpawn:r.playerSpawn?{...r.playerSpawn}:{col:Math.floor((r.cols||30)/2),row:Math.floor((r.rows||17)/2)},
+      tileColors:r.tileColors?{...r.tileColors}:{floor:'#22304a',wall:'#1a2340',destructible:'#1a2340'},
+      waves:r.waves?r.waves.map(normaliseBossWave):defaultWaves(),
+      tiles:r.tiles.map(row=>[...row]),
+    };
+  });
   Object.keys(undoStacks).forEach(k=>delete undoStacks[k]);
   verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion;
   activeRoom=0; openWave=-1; selectRoom(0);

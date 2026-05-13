@@ -54,6 +54,18 @@ export class DynamicLevel extends Level {
         cfg.binding, cfg.name, cfg.color, cfg.classId ?? 'sword',
       ));
     });
+
+    // Apply persistent shop upgrades (no-op when upgrades haven't been set yet)
+    const upg = this.game.state.upgrades;
+    if (upg) {
+      for (const pl of this.players) {
+        if (upg.speedTier       > 0) pl.speed           *= 1 + 0.15 * upg.speedTier;
+        if (upg.weaponSpeedTier > 0) pl._weaponSpeedMult = 1 + 0.20 * upg.weaponSpeedTier;
+        if (upg.maxHpTier       > 0) { pl.maxHp += 30 * upg.maxHpTier; pl.hp = pl.maxHp; }
+        if (upg.pendingHeal)         pl.hp = pl.maxHp;
+      }
+      upg.pendingHeal = false;   // consume — won't fire again until the next flask purchase
+    }
   }
 
   onExit() {

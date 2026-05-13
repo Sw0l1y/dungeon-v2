@@ -29,6 +29,7 @@ export class Player {
     this._moveDirX   = 0;
     this._moveDirY   = 1;
     this._atkCooldown = 0;
+    this._weaponSpeedMult = 1.0;   // multiplied by weapon-speed upgrade tier
     this._abilityCooldown = 0;
     this._abilityMaxCooldown = ABILITY_COOLDOWNS[classId] ?? 1;
     this._iframes     = 0;
@@ -369,13 +370,13 @@ export class Player {
 
   _attack() {
     if (this.classId === 'sword') {
-      this._atkCooldown = 0.38;
+      this._atkCooldown = 0.38 / this._weaponSpeedMult;
       this.level.addEntity(
         new SwordSwing(this.level, this.x, this.y, this._facingX, this._facingY, this)
       );
     } else if (this.classId === 'rogue') {
       if (this._dashing) return;
-      this._atkCooldown = 0.75;
+      this._atkCooldown = 0.75 / this._weaponSpeedMult;
       this._dashing     = true;
       this._dashTimer   = 0.13;
       // _facingX/Y already updated this frame toward the target
@@ -383,8 +384,8 @@ export class Player {
       this._dashDirY    = this._facingY;
       this._iframes     = 0.18; // invincible through the full dash + tiny buffer
     } else if (this.classId === 'archer') {
-      this._atkCooldown = 0.3;
-      const speed  = 420;
+      this._atkCooldown = 0.3 / this._weaponSpeedMult;
+      const speed  = 420 * this._weaponSpeedMult;
       const target = this._nearestEnemy();
       let dirX = this._facingX, dirY = this._facingY;
       if (target) {
