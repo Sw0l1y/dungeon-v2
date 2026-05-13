@@ -501,7 +501,8 @@ export class Player {
       const col = Math.floor((this.x + dx * t) / ts);
       const row = Math.floor((this.y + dy * t) / ts);
       const tile = map[row]?.[col];
-      if (tile === 1 || tile === 2) return false; // tile 3 is passable, not a LoS blocker
+      if (tile === 1) return false;
+      if (tile === 2 && !this._devMode) return false; // dev walks through destructible walls
     }
     return true;
   }
@@ -519,7 +520,9 @@ export class Player {
       const col = Math.floor(px / ts);
       const row = Math.floor(py / ts);
       if (row < 0 || row >= map.length || col < 0 || col >= map[0].length) return true;
-      if (map[row][col] === 1 || map[row][col] === 2) return true;
+      const t = map[row][col];
+      if (t === 1) return true;
+      if (t === 2 && !this._devMode) return true; // dev phases through destructible walls
     }
     return false;
   }
