@@ -275,12 +275,12 @@ export class ShopScene extends Scene {
 
   draw(ctx) {
     const { width: W, height: H } = this.game.canvas;
-    ctx.fillStyle = '#080611'; ctx.fillRect(0, 0, W, H);
-    const g1 = ctx.createRadialGradient(W/2, H*0.35, 0, W/2, H*0.35, W*0.52);
-    g1.addColorStop(0, 'rgba(150,100,0,0.13)'); g1.addColorStop(0.45,'rgba(90,45,0,0.07)'); g1.addColorStop(1,'rgba(0,0,0,0)');
+    ctx.fillStyle = '#060410'; ctx.fillRect(0, 0, W, H);
+    const g1 = ctx.createRadialGradient(W/2, H*0.4, 0, W/2, H*0.4, W*0.55);
+    g1.addColorStop(0, 'rgba(120,80,0,0.10)'); g1.addColorStop(0.5,'rgba(60,35,0,0.05)'); g1.addColorStop(1,'rgba(0,0,0,0)');
     ctx.fillStyle = g1; ctx.fillRect(0, 0, W, H);
     ctx.save();
-    for (const p of this._particles) { ctx.globalAlpha=p.alpha*0.60; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); }
+    for (const p of this._particles) { ctx.globalAlpha=p.alpha*0.50; ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(p.x,p.y,p.size,0,Math.PI*2); ctx.fill(); }
     ctx.restore();
     this._drawShopUI(ctx, W, H);
   }
@@ -289,35 +289,48 @@ export class ShopScene extends Scene {
 
   _drawShopUI(ctx, W, H) {
     const t = Date.now();
+    const HDR_H = 44;
 
-    // Title
-    const pulse = 0.88 + 0.12 * Math.sin(t / 1400);
-    ctx.save(); ctx.globalAlpha = pulse;
-    ctx.shadowColor = 'rgba(255,209,102,0.5)'; ctx.shadowBlur = 18;
-    ctx.fillStyle = '#ffd166'; ctx.font = 'bold 20px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('The Armory', W / 2, 18);
+    // Header bg
+    ctx.save();
+    const hg = ctx.createLinearGradient(0, 0, 0, HDR_H);
+    hg.addColorStop(0, 'rgba(18,12,3,0.98)'); hg.addColorStop(1, 'rgba(10,7,2,0.85)');
+    ctx.fillStyle = hg; ctx.fillRect(0, 0, W, HDR_H);
+    ctx.strokeStyle = 'rgba(255,209,102,0.18)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, HDR_H); ctx.lineTo(W, HDR_H); ctx.stroke();
     ctx.restore();
 
-    // Gold badge (right of center)
-    this._drawGoldBadge(ctx, this.game.state.gold ?? 0, W * 0.82, 8);
+    // Title
+    const pulse = 0.90 + 0.10 * Math.sin(t / 1400);
+    ctx.save(); ctx.globalAlpha = pulse;
+    ctx.shadowColor = 'rgba(255,209,102,0.50)'; ctx.shadowBlur = 22;
+    ctx.fillStyle = '#ffd166'; ctx.font = 'bold 19px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('The Armory', W / 2, HDR_H / 2);
+    ctx.restore();
 
-    // Dashed divider
-    ctx.save(); ctx.strokeStyle = 'rgba(255,209,102,0.12)'; ctx.lineWidth = 1; ctx.setLineDash([4, 6]);
-    ctx.beginPath(); ctx.moveTo(W/2, 34); ctx.lineTo(W/2, H - 18); ctx.stroke();
-    ctx.setLineDash([]); ctx.restore();
+    // Gold badge — top-right of header
+    this._drawGoldBadge(ctx, this.game.state.gold ?? 0, W - 12, 6, HDR_H - 12);
+
+    // Bottom hint strip
+    ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.font = '8.5px "Trebuchet MS", sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
+    ctx.fillText('P1: W/S nav · Q/E tab · Space buy · X ready    |    P2: I/K nav · U/O tab · Enter buy · M ready    |    Esc leave', W/2, H - 2);
+    ctx.restore();
 
     // Panel geometry
-    const OUTER_PAD = 8, INNER_GAP = 10;
-    const pW  = (W - 2*OUTER_PAD - INNER_GAP) / 2;
+    const OUTER_PAD = 10, PANEL_GAP = 12;
+    const pW  = (W - 2*OUTER_PAD - PANEL_GAP) / 2;
     const pX1 = OUTER_PAD;
-    const pX2 = OUTER_PAD + pW + INNER_GAP;
-    const pY  = 34;
-    const pH  = H - pY - 18;
+    const pX2 = OUTER_PAD + pW + PANEL_GAP;
+    const pY  = HDR_H + 6;
+    const pH  = H - pY - 16;
 
     for (const px of [pX1, pX2]) {
-      ctx.save(); ctx.fillStyle='rgba(8,5,18,0.60)'; ctx.strokeStyle='rgba(255,209,102,0.10)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.roundRect(px, pY, pW, pH, 6); ctx.fill(); ctx.stroke(); ctx.restore();
+      ctx.save();
+      ctx.fillStyle = 'rgba(7,4,16,0.68)'; ctx.strokeStyle = 'rgba(255,209,102,0.09)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(px, pY, pW, pH, 8); ctx.fill(); ctx.stroke();
+      ctx.restore();
     }
 
     this._drawPanel(ctx, this._p1, pX1, pY, pW, pH, 'Player 1', 'Q', 'E', 'Space', 'X');
@@ -325,91 +338,96 @@ export class ShopScene extends Scene {
 
     // Both ready overlay
     if (this._p1.ready && this._p2.ready) {
-      const op = 0.65 + 0.35 * Math.sin(t / 300);
+      const op = 0.70 + 0.30 * Math.sin(t / 300);
       ctx.save(); ctx.globalAlpha = op;
-      ctx.fillStyle = '#7fff7f'; ctx.font = 'bold 16px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = '#7fff7f'; ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.shadowColor = '#7fff7f'; ctx.shadowBlur = 20;
+      ctx.shadowColor = '#7fff7f'; ctx.shadowBlur = 28;
       ctx.fillText('Both Ready — Continuing…', W / 2, H / 2);
       ctx.restore();
     }
-
-    // Bottom hint
-    ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = '9px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    ctx.fillText('P1: W/S · Q/E tab · Space buy · X ready    |    P2: I/K · U/O tab · Enter buy · M ready    |    Esc leave', W/2, H - 3);
   }
 
   // ── Panel ────────────────────────────────────────────────────────────────────
 
   _drawPanel(ctx, ps, pX, pY, pW, pH, label, leftKey, rightKey, buyKey, readyKey) {
-    const N_COLS   = COLUMNS.length;
-    const H_PAD    = 8;
-    const COL_GAP  = 5;
-    const LABEL_H  = 20;
-    const HEADER_H = 20;
-    const INFO_H   = 52;
-    const READY_H  = 40;
-    const BOT_PAD  = 10;
-    const GAP_ROW  = 5;
+    const N_COLS  = COLUMNS.length;
+    const IP      = 10;
+    const TAB_GAP = 4;
+    const LABEL_H = 24;
+    const TAB_H   = 28;
+    const INFO_H  = 58;
+    const READY_H = 40;
+    const BOT_PAD = 8;
+    const GAP_ROW = 6;
     const MAX_ROWS = 4;
+    const ICON_W  = 54;
+    const COST_W  = 68;
 
-    // Dynamic card height fills remaining vertical space
-    const nonCardH = LABEL_H + 3 + HEADER_H + 4 + INFO_H + 6 + READY_H + BOT_PAD + (MAX_ROWS - 1) * GAP_ROW;
-    const CARD_H   = Math.max(60, Math.floor((pH - nonCardH) / MAX_ROWS));
-    const CARD_W   = (pW - 2*H_PAD - (N_COLS - 1)*COL_GAP) / N_COLS;
+    const TAB_W  = (pW - 2*IP - (N_COLS - 1)*TAB_GAP) / N_COLS;
+    const CARD_W = pW - 2*IP;
+    const CARD_X = pX + IP;
 
-    const TABS_Y   = pY + LABEL_H + 3;
-    const CARDS_Y  = TABS_Y + HEADER_H + 4;
-    const infoY    = CARDS_Y + MAX_ROWS * (CARD_H + GAP_ROW) - GAP_ROW + 6;
-    const readyY   = infoY + INFO_H + 6;
+    const TABS_Y  = pY + LABEL_H + 5;
+    const CARDS_Y = TABS_Y + TAB_H + 6;
+    const usedH   = LABEL_H + 5 + TAB_H + 6 + (MAX_ROWS - 1)*GAP_ROW + 8 + INFO_H + 6 + READY_H + BOT_PAD;
+    const CARD_H  = Math.max(68, Math.floor((pH - usedH) / MAX_ROWS));
+    const INFO_Y  = CARDS_Y + MAX_ROWS * (CARD_H + GAP_ROW) - GAP_ROW + 8;
+    const READY_Y = INFO_Y + INFO_H + 6;
 
-    const t   = Date.now();
-    const upg = this.game.state.upgrades ?? defaultUpgrades();
+    const t    = Date.now();
+    const upg  = this.game.state.upgrades ?? defaultUpgrades();
     const gold = this.game.state.gold ?? 0;
+    const col  = COLUMNS[ps.colIdx];
 
-    // ── Label row with nav key badges ─────────────────────────────────────────
+    // ── Player label ──────────────────────────────────────────────────────────
     const labelMidY = pY + LABEL_H / 2;
-    this._drawKeyBadge(ctx, leftKey,  pX + H_PAD,      labelMidY, 'left');
-    this._drawKeyBadge(ctx, rightKey, pX + pW - H_PAD, labelMidY, 'right');
+    this._drawKeyBadge(ctx, leftKey,  CARD_X,         labelMidY, 'left');
+    this._drawKeyBadge(ctx, rightKey, pX + pW - IP,   labelMidY, 'right');
     ctx.save();
-    ctx.fillStyle = 'rgba(255,255,255,0.60)'; ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.52)'; ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(label, pX + pW / 2, labelMidY);
     ctx.restore();
 
-    // ── Column tabs ───────────────────────────────────────────────────────────
+    // ── Category tabs ─────────────────────────────────────────────────────────
     for (let ci = 0; ci < N_COLS; ci++) {
-      const col      = COLUMNS[ci];
-      const tabX     = pX + H_PAD + ci * (CARD_W + COL_GAP);
+      const tabCol   = COLUMNS[ci];
+      const tabX     = CARD_X + ci * (TAB_W + TAB_GAP);
       const isActive = ci === ps.colIdx;
-      const hp       = isActive ? (0.92 + 0.08 * Math.sin(t / 280)) : 0.50;
+      const alpha    = isActive ? (0.96 + 0.04 * Math.sin(t / 280)) : 0.52;
 
-      ctx.save(); ctx.globalAlpha = hp;
-      ctx.fillStyle   = isActive ? 'rgba(60,40,8,0.90)' : 'rgba(16,12,4,0.72)';
-      ctx.strokeStyle = isActive ? col.color : 'rgba(90,72,32,0.28)';
-      ctx.lineWidth   = isActive ? 1.6 : 0.8;
-      ctx.beginPath(); ctx.roundRect(tabX, TABS_Y, CARD_W, HEADER_H, 4); ctx.fill(); ctx.stroke();
+      ctx.save(); ctx.globalAlpha = alpha;
+      ctx.fillStyle   = isActive ? 'rgba(28,18,4,0.96)' : 'rgba(10,7,2,0.72)';
+      ctx.strokeStyle = isActive ? tabCol.color : 'rgba(70,55,20,0.25)';
+      ctx.lineWidth   = isActive ? 1.5 : 0.7;
+      ctx.beginPath(); ctx.roundRect(tabX, TABS_Y, TAB_W, TAB_H, 4); ctx.fill(); ctx.stroke();
       if (isActive) {
-        ctx.globalAlpha = 0.10 + 0.04 * Math.sin(t / 280);
-        ctx.fillStyle = col.color; ctx.beginPath(); ctx.roundRect(tabX, TABS_Y, CARD_W, HEADER_H, 4); ctx.fill();
+        // Category color wash
+        ctx.globalAlpha = 0.11 + 0.04 * Math.sin(t / 280);
+        ctx.fillStyle = tabCol.color;
+        ctx.beginPath(); ctx.roundRect(tabX, TABS_Y, TAB_W, TAB_H, 4); ctx.fill();
+        // Bottom accent bar
+        ctx.globalAlpha = alpha * 0.90;
+        ctx.fillStyle = tabCol.color;
+        ctx.beginPath(); ctx.roundRect(tabX + 8, TABS_Y + TAB_H - 3.5, TAB_W - 16, 2.5, 1.5); ctx.fill();
       }
-      ctx.globalAlpha = hp;
-      ctx.fillStyle = isActive ? col.color : '#887730';
-      ctx.font = isActive ? 'bold 9px "Trebuchet MS", sans-serif' : '9px "Trebuchet MS", sans-serif';
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = isActive ? tabCol.color : '#5a4a1a';
+      ctx.font = isActive ? 'bold 9.5px "Trebuchet MS", sans-serif' : '9px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(col.label, tabX + CARD_W / 2, TABS_Y + HEADER_H / 2);
+      ctx.fillText(tabCol.label, tabX + TAB_W / 2, TABS_Y + TAB_H / 2 - 0.5);
       ctx.restore();
     }
 
-    // ── Cards ─────────────────────────────────────────────────────────────────
+    // ── Item cards ────────────────────────────────────────────────────────────
     const items = this._colItems(ps.colIdx);
-    const colX  = pX + H_PAD + ps.colIdx * (CARD_W + COL_GAP);
 
     if (items.length === 0) {
-      ctx.save(); ctx.globalAlpha = 0.28; ctx.fillStyle = 'rgba(255,255,255,0.22)';
-      ctx.font = '9px "Trebuchet MS", sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('None for party', pX + pW / 2, CARDS_Y + 40);
+      ctx.save(); ctx.globalAlpha = 0.28;
+      ctx.fillStyle = '#d8cfc0'; ctx.font = '10px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('No items available for this party', pX + pW / 2, CARDS_Y + 50);
       ctx.restore();
     } else {
       for (let ri = 0; ri < items.length; ri++) {
@@ -420,154 +438,196 @@ export class ShopScene extends Scene {
         const maxed     = tier >= item.tiers || (item.id === 'flask' && upg.flaskBought);
         const cost      = maxed ? 0 : item.costs[tier];
         const canAfford = !maxed && gold >= cost;
-        const col       = COLUMNS[ps.colIdx];
-        const pulse     = isSel ? (0.94 + 0.06 * Math.sin(t / 240)) : 0.65;
+        const pulse     = isSel ? (0.97 + 0.03 * Math.sin(t / 240)) : 0.72;
 
         // Card bg
         ctx.save(); ctx.globalAlpha = pulse;
-        ctx.fillStyle   = isSel ? 'rgba(75,52,8,0.92)' : 'rgba(16,12,4,0.78)';
-        ctx.strokeStyle = isSel ? col.color : maxed ? 'rgba(140,243,255,0.38)' : canAfford ? 'rgba(255,200,80,0.28)' : 'rgba(70,55,22,0.22)';
-        ctx.lineWidth   = isSel ? 1.6 : 0.8;
-        ctx.beginPath(); ctx.roundRect(colX, cardY, CARD_W, CARD_H, 5); ctx.fill(); ctx.stroke();
+        ctx.fillStyle   = isSel ? 'rgba(52,35,6,0.96)' : 'rgba(12,8,2,0.84)';
+        ctx.strokeStyle = isSel ? col.color
+                        : maxed ? 'rgba(140,243,255,0.28)'
+                        : canAfford ? 'rgba(255,200,80,0.20)'
+                        : 'rgba(45,34,10,0.22)';
+        ctx.lineWidth   = isSel ? 1.5 : 0.8;
+        ctx.beginPath(); ctx.roundRect(CARD_X, cardY, CARD_W, CARD_H, 6); ctx.fill(); ctx.stroke();
         if (isSel) {
-          ctx.globalAlpha = 0.09 + 0.04 * Math.sin(t / 240);
-          ctx.fillStyle = col.color; ctx.beginPath(); ctx.roundRect(colX, cardY, CARD_W, CARD_H, 5); ctx.fill();
+          ctx.globalAlpha = 0.07 + 0.03 * Math.sin(t / 240);
+          ctx.fillStyle = col.color;
+          ctx.beginPath(); ctx.roundRect(CARD_X, cardY, CARD_W, CARD_H, 6); ctx.fill();
         }
         ctx.restore();
 
-        // Icon — centered vertically on left
-        this._drawItemIcon(ctx, item.icon, colX + 22, cardY + CARD_H / 2, isSel, t, item.classId, 0.90);
+        // Icon zone — soft circle bg + icon
+        const iconCX = CARD_X + ICON_W / 2;
+        const iconCY = cardY + CARD_H / 2;
+        ctx.save(); ctx.globalAlpha = isSel ? 0.20 : 0.09;
+        ctx.fillStyle = isSel ? col.color : 'rgba(255,255,255,0.5)';
+        ctx.beginPath(); ctx.arc(iconCX, iconCY, ICON_W * 0.36, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        this._drawItemIcon(ctx, item.icon, iconCX, iconCY, isSel, t, item.classId, 1.25);
 
-        const textX = colX + 42;
-
-        // Name
-        ctx.save(); ctx.globalAlpha = isSel ? 1 : 0.72;
-        ctx.fillStyle = isSel ? '#ffd166' : '#b89838';
-        ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
-        ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-        ctx.fillText(item.name, textX, cardY + 8);
+        // Divider between icon and text
+        ctx.save(); ctx.globalAlpha = isSel ? 0.16 : 0.07;
+        ctx.strokeStyle = isSel ? col.color : 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(CARD_X + ICON_W, cardY + 10); ctx.lineTo(CARD_X + ICON_W, cardY + CARD_H - 10); ctx.stroke();
         ctx.restore();
 
-        // Desc on card (fits with taller cards)
-        ctx.save(); ctx.globalAlpha = isSel ? 0.80 : 0.45;
-        ctx.fillStyle = 'rgba(255,255,255,0.85)';
-        ctx.font = '8.5px "Trebuchet MS", sans-serif';
+        // Text zone
+        const textX   = CARD_X + ICON_W + 12;
+        const nameY   = cardY + Math.floor(CARD_H * 0.22);
+        const descY   = nameY + 18;
+        const detailY = cardY + CARD_H - 14;
+
+        // Name
+        ctx.save(); ctx.globalAlpha = isSel ? 1.0 : 0.76;
+        ctx.fillStyle = isSel ? '#ffd166' : '#a08228';
+        ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
         ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-        ctx.fillText(item.desc, textX, cardY + 22);
+        if (isSel) { ctx.shadowColor = 'rgba(255,209,102,0.35)'; ctx.shadowBlur = 7; }
+        ctx.fillText(item.name, textX, nameY);
+        ctx.restore();
+
+        // Desc
+        ctx.save(); ctx.globalAlpha = isSel ? 0.84 : 0.48;
+        ctx.fillStyle = '#cfc8bc';
+        ctx.font = '9.5px "Trebuchet MS", sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+        ctx.fillText(item.desc, textX, descY);
         ctx.restore();
 
         // Tier pips
         if (item.tiers > 1) {
-          let pipX = textX; const pipY = cardY + 36;
-          for (let p2 = 0; p2 < item.tiers; p2++) {
-            ctx.fillStyle = p2 < tier ? '#ffd166' : 'rgba(80,60,16,0.5)';
-            ctx.strokeStyle = p2 < tier ? 'rgba(255,220,80,0.6)' : 'rgba(60,45,10,0.35)';
-            ctx.lineWidth = 0.8;
-            ctx.beginPath(); ctx.arc(pipX + 3, pipY, 3, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-            pipX += 8;
+          let pipX = textX;
+          for (let p = 0; p < item.tiers; p++) {
+            const filled = p < tier;
+            ctx.save(); ctx.globalAlpha = isSel ? (filled ? 1.0 : 0.30) : (filled ? 0.72 : 0.18);
+            ctx.fillStyle   = filled ? '#ffd166' : 'rgba(100,78,22,0.6)';
+            ctx.strokeStyle = filled ? 'rgba(255,220,80,0.5)' : 'rgba(70,52,14,0.3)';
+            ctx.lineWidth   = 0.8;
+            ctx.beginPath(); ctx.arc(pipX + 4, detailY, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            ctx.restore();
+            pipX += 11;
           }
         }
 
         // Class badge
         if (item.classId) {
           const bc = item.classId==='sword' ? '#8cf3ff' : item.classId==='rogue' ? '#c77dff' : '#ffb347';
-          ctx.save(); ctx.globalAlpha = isSel ? 0.80 : 0.35;
-          ctx.fillStyle = bc; ctx.font = '7.5px "Trebuchet MS", sans-serif';
-          ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-          ctx.fillText(item.classId, textX, cardY + CARD_H - 5);
+          const pipOffset = item.tiers > 1 ? item.tiers * 11 + 8 : 0;
+          ctx.save(); ctx.globalAlpha = isSel ? 0.78 : 0.32;
+          ctx.fillStyle = bc; ctx.font = '8px "Trebuchet MS", sans-serif';
+          ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+          ctx.fillText(item.classId, textX + pipOffset, detailY);
           ctx.restore();
         }
 
-        // Cost / MAX
-        ctx.save(); ctx.globalAlpha = isSel ? 1 : 0.65;
-        ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+        // Cost / MAX — right zone
+        const costCX = CARD_X + CARD_W - COST_W / 2;
+        const costCY = cardY + CARD_H / 2;
+        ctx.save(); ctx.globalAlpha = isSel ? 1.0 : 0.68;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         if (maxed) {
-          ctx.fillStyle = '#8cf3ff'; ctx.font = 'bold 8px "Trebuchet MS", sans-serif';
-          ctx.fillText('✓ MAX', colX + CARD_W - 7, cardY + CARD_H / 2);
+          ctx.fillStyle = '#8cf3ff'; ctx.font = 'bold 9.5px "Trebuchet MS", sans-serif';
+          if (isSel) { ctx.shadowColor = '#8cf3ff'; ctx.shadowBlur = 10; }
+          ctx.fillText('✓ MAX', costCX, costCY);
         } else {
-          ctx.fillStyle = canAfford ? '#ffd166' : 'rgba(160,110,30,0.50)';
-          ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
-          ctx.fillText(`◈ ${cost}`, colX + CARD_W - 7, cardY + CARD_H / 2);
+          ctx.fillStyle = canAfford ? '#ffd166' : 'rgba(140,100,28,0.55)';
+          ctx.font = `bold ${isSel ? 13 : 12}px "Trebuchet MS", sans-serif`;
+          if (isSel && canAfford) { ctx.shadowColor = '#ffd166'; ctx.shadowBlur = 10; }
+          ctx.fillText(`◈ ${cost}`, costCX, costCY);
         }
         ctx.restore();
       }
     }
 
     // ── Info panel ────────────────────────────────────────────────────────────
-    const infoX = pX + H_PAD, infoW = pW - 2*H_PAD;
     ctx.save();
-    ctx.fillStyle = 'rgba(14,10,3,0.78)'; ctx.strokeStyle = 'rgba(255,209,102,0.14)'; ctx.lineWidth = 0.8;
-    ctx.beginPath(); ctx.roundRect(infoX, infoY, infoW, INFO_H, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(8,5,1,0.82)'; ctx.strokeStyle = 'rgba(255,209,102,0.11)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.roundRect(CARD_X, INFO_Y, CARD_W, INFO_H, 5); ctx.fill(); ctx.stroke();
     const sel = this._selectedItem(ps);
     if (sel) {
-      ctx.fillStyle = '#ffd166'; ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
+      const selTier  = _getTier(upg, sel.id);
+      const selMaxed = selTier >= sel.tiers || (sel.id === 'flask' && upg.flaskBought);
+
+      ctx.fillStyle = '#ffd166'; ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-      ctx.fillText(sel.name, infoX + 10, infoY + 7);
+      ctx.fillText(sel.name, CARD_X + 12, INFO_Y + 9);
+
       if (sel.extra) {
-        ctx.fillStyle = 'rgba(200,160,80,0.60)'; ctx.font = '9px "Trebuchet MS", sans-serif';
-        ctx.fillText(sel.extra, infoX + 10, infoY + 22);
+        ctx.fillStyle = 'rgba(200,165,80,0.62)'; ctx.font = '9.5px "Trebuchet MS", sans-serif';
+        ctx.fillText(sel.extra, CARD_X + 12, INFO_Y + 25);
       }
-      const tier  = _getTier(upg, sel.id);
-      const maxed = tier >= sel.tiers || (sel.id === 'flask' && upg.flaskBought);
+
+      // Tier progress bar
+      if (sel.tiers > 1) {
+        const barX = CARD_X + 12, barY = INFO_Y + INFO_H - 15, barW = 100, barH = 5;
+        ctx.fillStyle = 'rgba(50,38,12,0.65)';
+        ctx.beginPath(); ctx.roundRect(barX, barY, barW, barH, 2.5); ctx.fill();
+        const fill = selMaxed ? 1 : selTier / sel.tiers;
+        if (fill > 0) {
+          ctx.fillStyle = selMaxed ? '#8cf3ff' : '#ffd166';
+          ctx.beginPath(); ctx.roundRect(barX, barY, barW * fill, barH, 2.5); ctx.fill();
+        }
+        ctx.fillStyle = selMaxed ? '#8cf3ff' : 'rgba(255,255,255,0.32)';
+        ctx.font = '8px "Trebuchet MS", sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(selMaxed ? 'Maxed' : `${selTier} / ${sel.tiers}`, barX + barW + 7, barY + barH / 2);
+      } else if (selMaxed) {
+        ctx.fillStyle = '#8cf3ff'; ctx.font = 'bold 8.5px "Trebuchet MS", sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillText('✓ Unlocked', CARD_X + 12, INFO_Y + INFO_H - 6);
+      }
+
       ctx.textAlign = 'right'; ctx.textBaseline = 'top';
-      ctx.fillStyle = maxed ? '#8cf3ff' : 'rgba(255,255,255,0.30)';
-      ctx.font = maxed ? 'bold 9px "Trebuchet MS", sans-serif' : '9px "Trebuchet MS", sans-serif';
-      ctx.fillText(maxed ? '✓ Maxed' : `Tier ${tier} / ${sel.tiers}`, infoX + infoW - 8, infoY + 7);
+      ctx.fillStyle = selMaxed ? '#8cf3ff' : 'rgba(255,255,255,0.25)';
+      ctx.font = selMaxed ? 'bold 9px "Trebuchet MS", sans-serif' : '9px "Trebuchet MS", sans-serif';
+      ctx.fillText(selMaxed ? '✓ Maxed' : `Tier ${selTier} / ${sel.tiers}`, CARD_X + CARD_W - 10, INFO_Y + 9);
     } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = '9px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = '9.5px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('No items for party', infoX + infoW / 2, infoY + INFO_H / 2);
+      ctx.fillText('No items for this party', CARD_X + CARD_W / 2, INFO_Y + INFO_H / 2);
     }
     ctx.restore();
 
     // ── Per-player message ────────────────────────────────────────────────────
     if (ps.message) {
       ctx.save(); ctx.globalAlpha = Math.min(1, ps.message.timer * 1.5);
-      ctx.fillStyle = ps.message.color; ctx.shadowColor = ps.message.color; ctx.shadowBlur = 12;
-      ctx.font = 'bold 10px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = ps.message.color; ctx.shadowColor = ps.message.color; ctx.shadowBlur = 14;
+      ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-      ctx.fillText(ps.message.text, pX + pW / 2, infoY - 4);
+      ctx.fillText(ps.message.text, pX + pW / 2, INFO_Y - 5);
       ctx.restore();
     }
 
     // ── Ready button ──────────────────────────────────────────────────────────
     const isReady    = ps.ready;
     const otherReady = ps === this._p1 ? this._p2.ready : this._p1.ready;
-    const rX = pX + H_PAD, rW = pW - 2*H_PAD;
+    const rPulse     = isReady ? (0.82 + 0.18 * Math.sin(t / 400)) : 1;
 
-    ctx.save();
-    const rPulse = isReady ? (0.80 + 0.20 * Math.sin(t / 400)) : 1;
-    ctx.globalAlpha = rPulse;
-    ctx.fillStyle   = isReady ? 'rgba(0,160,70,0.28)'  : 'rgba(30,22,8,0.72)';
-    ctx.strokeStyle = isReady ? 'rgba(127,255,127,0.80)' : 'rgba(255,200,80,0.30)';
-    ctx.lineWidth   = isReady ? 1.6 : 0.8;
-    ctx.beginPath(); ctx.roundRect(rX, readyY, rW, READY_H, 5); ctx.fill(); ctx.stroke();
+    ctx.save(); ctx.globalAlpha = rPulse;
+    ctx.fillStyle   = isReady ? 'rgba(0,130,55,0.32)' : 'rgba(18,13,4,0.78)';
+    ctx.strokeStyle = isReady ? 'rgba(127,255,127,0.72)' : 'rgba(255,200,80,0.22)';
+    ctx.lineWidth   = isReady ? 1.5 : 0.8;
+    ctx.beginPath(); ctx.roundRect(CARD_X, READY_Y, CARD_W, READY_H, 6); ctx.fill(); ctx.stroke();
     if (isReady) {
-      ctx.globalAlpha = 0.08 + 0.04 * Math.sin(t / 400);
-      ctx.fillStyle = '#7fff7f'; ctx.beginPath(); ctx.roundRect(rX, readyY, rW, READY_H, 5); ctx.fill();
+      ctx.globalAlpha = (0.07 + 0.03 * Math.sin(t / 400)) * rPulse;
+      ctx.fillStyle = '#7fff7f'; ctx.beginPath(); ctx.roundRect(CARD_X, READY_Y, CARD_W, READY_H, 6); ctx.fill();
     }
     ctx.globalAlpha = rPulse;
-    ctx.fillStyle = isReady ? '#7fff7f' : 'rgba(255,255,255,0.42)';
-    ctx.font = isReady ? 'bold 12px "Trebuchet MS", sans-serif' : '11px "Trebuchet MS", sans-serif';
+    ctx.fillStyle = isReady ? '#7fff7f' : 'rgba(255,255,255,0.38)';
+    ctx.font = isReady ? 'bold 13px "Trebuchet MS", sans-serif' : '11px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText(isReady ? '✓  Ready' : 'Not Ready', pX + pW / 2, readyY + READY_H / 2);
-    this._drawKeyBadge(ctx, readyKey, rX + rW - 8, readyY + READY_H / 2, 'right');
+    if (isReady) { ctx.shadowColor = '#7fff7f'; ctx.shadowBlur = 12; }
+    ctx.fillText(isReady ? '✓  Ready' : 'Not Ready', pX + pW / 2, READY_Y + READY_H / 2);
+    this._drawKeyBadge(ctx, readyKey, CARD_X + CARD_W - IP, READY_Y + READY_H / 2, 'right');
     ctx.restore();
 
-    // "Waiting for other player" sub-line
     if (isReady && !otherReady) {
       ctx.save(); ctx.globalAlpha = 0.35 + 0.20 * Math.sin(t / 600);
-      ctx.fillStyle = '#7fff7f'; ctx.font = '8px "Trebuchet MS", sans-serif';
+      ctx.fillStyle = '#7fff7f'; ctx.font = '8.5px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillText('waiting for other player…', pX + pW / 2, readyY + READY_H + 3);
+      ctx.fillText('waiting for other player…', pX + pW / 2, READY_Y + READY_H + 3);
       ctx.restore();
     }
-
-    // Buy hint
-    ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.font = '8px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillText(`[${buyKey}] buy`, pX + pW / 2, CARDS_Y - 1);
-    ctx.restore();
   }
 
   // ── Key badge ────────────────────────────────────────────────────────────────
@@ -576,28 +636,29 @@ export class ShopScene extends Scene {
 
   _drawKeyBadge(ctx, label, cx, cy, side) {
     ctx.save();
-    ctx.font = 'bold 8px "Trebuchet MS", sans-serif';
+    ctx.font = 'bold 8.5px "Trebuchet MS", sans-serif';
     const tw = ctx.measureText(label).width;
-    const bw = tw + 8, bh = 14;
+    const bw = tw + 10, bh = 15;
     const bx = side === 'left' ? cx + 2 : cx - bw - 2;
-    ctx.fillStyle = 'rgba(20,15,5,0.85)'; ctx.strokeStyle = 'rgba(255,209,102,0.40)'; ctx.lineWidth = 0.8;
+    ctx.fillStyle = 'rgba(16,11,3,0.88)'; ctx.strokeStyle = 'rgba(255,209,102,0.38)'; ctx.lineWidth = 0.8;
     ctx.beginPath(); ctx.roundRect(bx, cy - bh/2, bw, bh, 3); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = 'rgba(255,209,102,0.75)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(255,209,102,0.72)'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(label, bx + bw/2, cy);
     ctx.restore();
   }
 
   // ── Gold badge ────────────────────────────────────────────────────────────────
 
-  _drawGoldBadge(ctx, gold, anchorX, topY) {
-    ctx.save(); ctx.globalAlpha = 0.88 + 0.12 * Math.sin(Date.now() / 650);
-    ctx.font = 'bold 11px "Trebuchet MS", sans-serif';
+  _drawGoldBadge(ctx, gold, rightEdgeX, topY, badgeH) {
+    ctx.save(); ctx.globalAlpha = 0.90 + 0.10 * Math.sin(Date.now() / 650);
+    ctx.font = 'bold 12px "Trebuchet MS", sans-serif';
     const txt = `◈  ${gold}  gold`, tw = ctx.measureText(txt).width;
-    const px = anchorX - tw/2 - 8, py = topY;
-    ctx.fillStyle = 'rgba(8,6,2,0.82)'; ctx.strokeStyle = 'rgba(255,209,102,0.36)'; ctx.lineWidth = 1.2;
-    ctx.beginPath(); ctx.roundRect(px, py, tw + 16, 19, 4); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText(txt, px + 8, py + 4);
+    const bw = tw + 18;
+    const bx = rightEdgeX - bw, by = topY;
+    ctx.fillStyle = 'rgba(6,4,1,0.86)'; ctx.strokeStyle = 'rgba(255,209,102,0.32)'; ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.roundRect(bx, by, bw, badgeH, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#ffd166'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(txt, bx + bw/2, by + badgeH/2);
     ctx.restore();
   }
 
