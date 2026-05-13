@@ -11,19 +11,20 @@ export class Input {
     this._eatEscape = false;
 
     this._onKeyDown = (e) => {
+      // Yield all key processing to native HTML inputs when one is focused
+      if (document.activeElement?.tagName === 'INPUT') return;
       if (e.code === 'Escape' && document.fullscreenElement) {
         this._eatEscape = true;
       }
       if (!this._held.has(e.code)) this._justPressed.add(e.code);
       this._held.add(e.code);
-      // Ignore key-repeat events for character input — otherwise holding a key
-      // floods the name field with repeated characters.
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) {
         this._chars.push(e.key);
       }
     };
     this._onKeyUp = (e) => {
       this._held.delete(e.code);
+      if (document.activeElement?.tagName === 'INPUT') return;
       this._justReleased.add(e.code);
     };
 

@@ -48,6 +48,7 @@ export class OnlineLobbyScene extends Scene {
     this._copyFeedback  = 0;
     this._syncTimer     = 0;
     this._editingSlot   = null;
+    this._nameInput     = null; // active HTML <input> overlay, or null
     this._mySlotIdxs    = [];    // client: which slot indices belong to this device
 
     // Host: Set<peerId> of currently connected clients
@@ -223,6 +224,7 @@ export class OnlineLobbyScene extends Scene {
   }
 
   onExit() {
+    this._hideNameInput();
     this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
     this.game.canvas.removeEventListener('mousedown', this._onMouseDown);
     // Don't close net — ClassScene / GameScene still need it
@@ -287,6 +289,77 @@ export class OnlineLobbyScene extends Scene {
         .filter(i => i !== -1);
       this._net.sendTo(peerId, { t: 'lobbySync', s: payload, mine });
     }
+  }
+
+  // ── HTML name-input overlay ───────────────────────────────────────────────
+
+  _showNameInput(slotIdx) {
+    this._hideNameInput();
+    this._editingSlot = slotIdx;
+
+    const card = this._cardRect(slotIdx);
+    const nf   = this._nameField(card);
+    const rect = this.game.canvas.getBoundingClientRect();
+    const sx   = rect.width  / this.game.canvas.width;
+    const sy   = rect.height / this.game.canvas.height;
+
+    const el = document.createElement('input');
+    el.type      = 'text';
+    el.maxLength = MAX_NAME;
+    el.value     = this._slots?.[slotIdx]?.name ?? '';
+
+    Object.assign(el.style, {
+      position:   'fixed',
+      left:       `${rect.left + nf.x * sx}px`,
+      top:        `${rect.top  + nf.y * sy}px`,
+      width:      `${nf.w * sx}px`,
+      height:     `${nf.h * sy}px`,
+      padding:    `0 ${8 * sx}px`,
+      background: 'transparent',
+      border:     'none',
+      outline:    'none',
+      color:      '#fff',
+      font:       `${13 * sy}px "Trebuchet MS", sans-serif`,
+      boxSizing:  'border-box',
+      caretColor: '#8cf3ff',
+      zIndex:     '9999',
+    });
+
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.stopPropagation();
+        el.blur();
+      }
+    });
+
+    el.addEventListener('input', () => {
+      const slot = this._slots?.[slotIdx];
+      if (!slot) return;
+      slot.name = el.value;
+      if (this._role === 'host') this._syncLobby();
+      else this._net?.send({ t: 'clientUpdate', idx: slotIdx, n: slot.name });
+    });
+
+    el.addEventListener('blur', () => {
+      if (this._editingSlot === slotIdx) {
+        const slot = this._slots?.[slotIdx];
+        if (slot) slot.name = el.value;
+      }
+      el.remove();
+      if (this._nameInput === el) {
+        this._nameInput   = null;
+        this._editingSlot = null;
+      }
+    });
+
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    this._nameInput = el;
+  }
+
+  _hideNameInput() {
+    if (this._nameInput) this._nameInput.blur();
   }
 
   // ── Layout ────────────────────────────────────────────────────────────────
@@ -382,24 +455,7 @@ export class OnlineLobbyScene extends Scene {
       this._goBack(); return;
     }
 
-    // Name typing
-    if (this._editingSlot !== null) {
-      const slot = this._slots?.[this._editingSlot];
-      if (slot) {
-        let changed = false;
-        for (const ch of input.chars) {
-          if (slot.name.length < MAX_NAME) { slot.name += ch; changed = true; }
-        }
-        if (input.justPressed('Backspace')) {
-          slot.name = slot.name.slice(0, -1); changed = true;
-        }
-        if (changed) {
-          if (this._role === 'host') this._syncLobby();
-          else this._net?.send({ t: 'clientUpdate', idx: this._editingSlot, n: slot.name });
-        }
-      }
-      if (input.justPressed('Enter')) { this._editingSlot = null; return; }
-    }
+    // Name typing: handled by HTML overlay input
 
     // Host Enter = launch
     if (this._editingSlot === null && this._role === 'host') {
@@ -474,7 +530,7 @@ export class OnlineLobbyScene extends Scene {
         // ── Edit name / color ──────────────────────────────────────────────
         if (!canEdit) continue;
 
-        if (this._hit(this._nameField(card), pt)) { this._editingSlot = idx; return; }
+        if (this._hit(this._nameField(card), pt)) { this._showNameInput(idx); return; }
 
         for (let ci = 0; ci < COLORS.length; ci++) {
           if (this._hit(this._colorSwatch(card, ci), pt)) {
@@ -960,11 +1016,12 @@ export class OnlineLobbyScene extends Scene {
       ctx.strokeStyle = editing ? '#8cf3ff' : nfHov ? 'rgba(140,243,255,0.35)' : 'rgba(255,255,255,0.08)';
       ctx.lineWidth = editing ? 1.5 : 1;
       ctx.beginPath(); ctx.roundRect(nf.x, nf.y, nf.w, nf.h, 5); ctx.stroke();
-      const cursor = editing && Math.floor(Date.now() / 500) % 2 === 0 ? '│' : '';
-      ctx.fillStyle = '#fff';
-      ctx.font = '13px "Trebuchet MS", sans-serif';
-      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(slot.name + cursor, nf.x + 8, nf.y + nf.h / 2);
+      if (!editing) {
+        ctx.fillStyle = '#fff';
+        ctx.font = '13px "Trebuchet MS", sans-serif';
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillText(slot.name, nf.x + 8, nf.y + nf.h / 2);
+      }
 
       // Color section
       ctx.fillStyle = 'rgba(255,255,255,0.28)';

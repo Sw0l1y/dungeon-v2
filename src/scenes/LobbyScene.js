@@ -19,6 +19,7 @@ export class LobbyScene extends Scene {
       { active: false, name: 'Player 2', colorIdx: 1 },
     ];
     this._editingSlot  = null; // 0 | 1 | null
+    this._nameInput    = null; // active HTML <input> overlay, or null
     this._mouse        = { x: 0, y: 0 };
     this._pendingClick = null;
 
@@ -40,6 +41,7 @@ export class LobbyScene extends Scene {
   }
 
   onExit() {
+    this._hideNameInput();
     this.game.canvas.removeEventListener('mousemove', this._onMouseMove);
     this.game.canvas.removeEventListener('mousedown', this._onMouseDown);
   }
@@ -104,26 +106,10 @@ export class LobbyScene extends Scene {
     if (input.justPressed('KeyV')) {
       this._slots[1].active = !this._slots[1].active;
       if (this._slots[1].active) this._resolveColorConflict(1);
-      if (!this._slots[1].active && this._editingSlot === 1) this._editingSlot = null;
+      if (!this._slots[1].active && this._editingSlot === 1) this._hideNameInput();
     }
 
-    // Name typing
-    if (this._editingSlot !== null) {
-      for (const ch of input.chars) {
-        const s = this._slots[this._editingSlot];
-        if (s.name.length < MAX_NAME) s.name += ch;
-      }
-      if (input.justPressed('Backspace')) {
-        const s = this._slots[this._editingSlot];
-        s.name = s.name.slice(0, -1);
-      }
-      if (input.justPressed('Escape') || input.justPressed('Enter')) {
-        this._editingSlot = null;
-        return;
-      }
-    }
-
-    // Enter starts game when not editing
+    // Enter starts game when not editing (HTML input handles Enter while typing)
     if (this._editingSlot === null && input.justPressed('Enter')) {
       this._startGame();
       return;
@@ -147,7 +133,7 @@ export class LobbyScene extends Scene {
     for (const i of [0, 1]) {
       if (!this._slots[i].active) continue;
 
-      if (this._hit(this._nameField(i), pt)) { this._editingSlot = i; return; }
+      if (this._hit(this._nameField(i), pt)) { this._showNameInput(i); return; }
       // Color grid — direct swatch selection
       for (let ci = 0; ci < COLORS.length; ci++) {
         if (this._hit(this._colorSwatch(i, ci), pt)) {
@@ -164,7 +150,66 @@ export class LobbyScene extends Scene {
     }
 
     // Click outside any field → stop editing
-    this._editingSlot = null;
+    this._hideNameInput();
+  }
+
+  // ── HTML name-input overlay ───────────────────────────────────────────────
+
+  _showNameInput(slotIdx) {
+    this._hideNameInput();
+    this._editingSlot = slotIdx;
+
+    const nf   = this._nameField(slotIdx);
+    const rect = this.game.canvas.getBoundingClientRect();
+    const sx   = rect.width  / this.game.canvas.width;
+    const sy   = rect.height / this.game.canvas.height;
+
+    const el = document.createElement('input');
+    el.type      = 'text';
+    el.maxLength = MAX_NAME;
+    el.value     = this._slots[slotIdx].name;
+
+    Object.assign(el.style, {
+      position:   'fixed',
+      left:       `${rect.left + nf.x * sx}px`,
+      top:        `${rect.top  + nf.y * sy}px`,
+      width:      `${nf.w * sx}px`,
+      height:     `${nf.h * sy}px`,
+      padding:    `0 ${10 * sx}px`,
+      background: 'transparent',
+      border:     'none',
+      outline:    'none',
+      color:      '#fff',
+      font:       `${15 * sy}px "Trebuchet MS", sans-serif`,
+      boxSizing:  'border-box',
+      caretColor: '#8cf3ff',
+      zIndex:     '9999',
+    });
+
+    el.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === 'Escape') {
+        e.stopPropagation();
+        el.blur();
+      }
+    });
+
+    el.addEventListener('blur', () => {
+      if (this._editingSlot === slotIdx) this._slots[slotIdx].name = el.value;
+      el.remove();
+      if (this._nameInput === el) {
+        this._nameInput   = null;
+        this._editingSlot = null;
+      }
+    });
+
+    document.body.appendChild(el);
+    el.focus();
+    el.select();
+    this._nameInput = el;
+  }
+
+  _hideNameInput() {
+    if (this._nameInput) this._nameInput.blur();
   }
 
   _takenColorIdxs(forSlotIdx) {
@@ -293,11 +338,12 @@ export class LobbyScene extends Scene {
     ctx.lineWidth = editing ? 2 : 1;
     ctx.beginPath(); ctx.roundRect(f.x, f.y, f.w, f.h, 6); ctx.stroke();
 
-    const cursor = editing && Math.floor(Date.now() / 500) % 2 === 0 ? '│' : '';
-    ctx.fillStyle = '#fff';
-    ctx.font = '15px "Trebuchet MS", sans-serif';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText(this._slots[i].name + cursor, f.x + 10, f.y + f.h / 2);
+    if (!editing) {
+      ctx.fillStyle = '#fff';
+      ctx.font = '15px "Trebuchet MS", sans-serif';
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.fillText(this._slots[i].name, f.x + 10, f.y + f.h / 2);
+    }
   }
 
   _drawColorField(ctx, i, color) {
