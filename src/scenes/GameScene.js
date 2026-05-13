@@ -463,11 +463,21 @@ export class GameScene extends Scene {
       return;
     }
 
-    // Camera follows the mean position of alive players
-    const alive = ps.filter(p => p.alive);
-    if (alive.length > 0) {
-      const cx = alive.reduce((s, p) => s + p.x, 0) / alive.length;
-      const cy = alive.reduce((s, p) => s + p.y, 0) / alive.length;
+    // Camera follows local players on this device.
+    // Local set: all players (no net), host's players (0..hostPlayerCount-1), or client's _myPlayerIdxs.
+    let localAlive;
+    if (!this._net) {
+      localAlive = ps.filter(p => p.alive);
+    } else if (this._netRole === 'host') {
+      localAlive = ps.slice(0, this._hostPlayerCount).filter(p => p.alive);
+    } else {
+      localAlive = this._myPlayerIdxs.map(i => ps[i]).filter(p => p?.alive);
+    }
+    // Fall back to all alive players if every local player is dead
+    const camTargets = localAlive.length > 0 ? localAlive : ps.filter(p => p.alive);
+    if (camTargets.length > 0) {
+      const cx = camTargets.reduce((s, p) => s + p.x, 0) / camTargets.length;
+      const cy = camTargets.reduce((s, p) => s + p.y, 0) / camTargets.length;
       this.camera.follow(cx, cy, dt);
       this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
     }

@@ -20,10 +20,12 @@ export class Camera {
     this.y = worldY - this.viewHeight / 2;
   }
 
-  /** Clamp the camera so it doesn't show outside the world bounds. */
+  /** Clamp camera to world bounds. Centers the axis if the world is smaller than the view. */
   clamp(worldWidth, worldHeight) {
-    this.x = Math.max(0, Math.min(this.x, Math.max(0, worldWidth  - this.viewWidth)));
-    this.y = Math.max(0, Math.min(this.y, Math.max(0, worldHeight - this.viewHeight)));
+    this.x = worldWidth  <= this.viewWidth  ? (worldWidth  - this.viewWidth)  / 2
+                                            : Math.max(0, Math.min(this.x, worldWidth  - this.viewWidth));
+    this.y = worldHeight <= this.viewHeight ? (worldHeight - this.viewHeight) / 2
+                                            : Math.max(0, Math.min(this.y, worldHeight - this.viewHeight));
   }
 
   /** Apply the camera transform to a ctx before drawing the world. */
