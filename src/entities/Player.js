@@ -81,9 +81,11 @@ export class Player {
     this._chargeTimer      = 0;      // overcharge: seconds held
     this._wasHoldingAttack = false;  // previous frame attack-held state (overcharge)
     this._wallBreakerUsed  = false;  // consumed when wall breaker item fires
-    // Necromancer minions
+    // Necromancer minions + soul orb economy
     this._skeletons    = [];
     this._maxSkeletons = 2;
+    this._orbCount     = 0;
+    this._maxOrbs      = 6;   // 3 orbs per summon, stores up to 2 charges
   }
 
   takeDamage(amount) {
@@ -209,6 +211,9 @@ export class Player {
       if (t.delay <= 0) t.a -= dt * 1.35;
     }
     this._ricochetTrail = this._ricochetTrail.filter(t => t.a > 0);
+
+    // Necromancer: auto-collect nearby soul orbs (SoulOrb.update handles the actual pickup)
+    // Nothing needed here — SoulOrb pulls the player reference directly.
 
     if (this.binding.justPressed('abilityA') && (this._abilityCooldown === 0 || this._devMode)) {
       this._abilityCooldown = 0;
@@ -506,12 +511,16 @@ export class Player {
   }
 
   _summonSkeleton() {
+    const ORB_COST = 3;
+    if (this._orbCount < ORB_COST && !this._devMode) return;
+
     // Remove oldest minion if already at cap
     if (this._skeletons.length >= this._maxSkeletons) {
       const oldest = this._skeletons.shift();
       oldest.die();
     }
-    // Spawn slightly offset from player
+    this._orbCount = Math.max(0, this._orbCount - ORB_COST);
+
     const angle  = Math.random() * Math.PI * 2;
     const offset = this.radius + 20;
     const sx = this.x + Math.cos(angle) * offset;
@@ -519,7 +528,7 @@ export class Player {
     const sk = new Skeleton(this.level, sx, sy, this);
     this._skeletons.push(sk);
     this.level.addEntity(sk);
-    this._abilityCooldown = this._abilityMaxCooldown;
+    this._abilityCooldown = 1.5;   // short cooldown to prevent double-tap
     if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
   }
 
@@ -785,7 +794,43 @@ export class Player {
     ctx.fillStyle = pct > 0.5 ? '#4cff72' : pct > 0.25 ? '#ffd24c' : '#ff4c4c';
     ctx.fillRect(barX, barY, barW * pct, barH);
 
-    if (this._abilityMaxCooldown > 0) {
+    if (this.classId === 'necromancer') {
+      // Orb pips: 6 small circles, filled = collected
+      const ORB_COST = 3;
+      const total = this._maxOrbs;
+      const pipR  = 3.5;
+      const gap   = 9;
+      const startX = this.x - ((total - 1) * gap) / 2;
+      const py2    = barY + 8;
+      for (let i = 0; i < total; i++) {
+        const filled = i < this._orbCount;
+        const isThreshold = i === ORB_COST - 1 || i === total - 1;
+        ctx.beginPath();
+        ctx.arc(startX + i * gap, py2, pipR, 0, Math.PI * 2);
+        if (filled) {
+          ctx.fillStyle = this._abilityCooldown <= 0 && this._orbCount >= ORB_COST
+            ? '#d7a8ff' : '#9b59b6';
+          ctx.globalAlpha = 0.90;
+          ctx.fill();
+        } else {
+          ctx.strokeStyle = 'rgba(180,140,220,0.35)';
+          ctx.lineWidth = 1;
+          ctx.globalAlpha = 1;
+          ctx.stroke();
+        }
+        // Separator after 3rd pip
+        if (isThreshold && i === ORB_COST - 1 && total > ORB_COST) {
+          ctx.globalAlpha = 0.30;
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(startX + (i + 0.5) * gap, py2 - pipR - 1);
+          ctx.lineTo(startX + (i + 0.5) * gap, py2 + pipR + 1);
+          ctx.stroke();
+        }
+      }
+      ctx.globalAlpha = 1;
+    } else if (this._abilityMaxCooldown > 0) {
       const ready = this._abilityCooldown <= 0;
       const aw = 30, ah = 3;
       const pctA = ready ? 1 : 1 - this._abilityCooldown / this._abilityMaxCooldown;
