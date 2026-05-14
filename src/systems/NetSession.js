@@ -139,9 +139,14 @@ export class NetSession {
         }
       }
       if (!pair) return { type: '?', rtt: null };
-      const remote = report.get(pair.remoteCandidateId);
-      const type   = remote?.candidateType ?? '?';
-      const rtt    = pair.currentRoundTripTime != null
+      const remote     = report.get(pair.remoteCandidateId);
+      const local      = report.get(pair.localCandidateId);
+      const remoteType = remote?.candidateType ?? '?';
+      const localType  = local?.candidateType  ?? '?';
+      // Report the "worse" side — if either end uses TURN, the connection is relayed
+      const rank = { relay: 0, srflx: 1, prflx: 2, host: 3 };
+      const type = (rank[remoteType] ?? 4) <= (rank[localType] ?? 4) ? remoteType : localType;
+      const rtt  = pair.currentRoundTripTime != null
         ? Math.round(pair.currentRoundTripTime * 1000)
         : null;
       return { type, rtt };
