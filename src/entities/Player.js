@@ -498,7 +498,7 @@ export class Player {
   _updateDrain(dt) {
     const DRAIN_RATE = 30;   // damage per second
     const LIFESTEAL  = 0.35; // fraction of damage converted to HP
-    const RANGE      = 185;
+    const RANGE      = 240;
 
     if (!this.binding.isHeld('attack') || !this.alive) {
       this._draining = false;
