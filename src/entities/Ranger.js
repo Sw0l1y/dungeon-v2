@@ -18,10 +18,15 @@ export class Ranger {
     this.damage   = 8; // contact damage (rare)
     this._preferDist  = 220;
     this._minDist     = 140;
-    this._shootCooldown = 1.5; // initial delay before first shot
+    this._shootCooldown  = 1.5; // initial delay before first shot
+    this._burstShotsLeft = 0;
+    this._burstTimer     = 0;
     this._hitCooldown = 0;
     this._path        = [];
     this._pathTimer   = 0;
+    this._lastTarget  = null;
+    this._lastTargetX = 0;
+    this._lastTargetY = 0;
   }
 
   takeDamage(amount, source = null) {
@@ -111,15 +116,39 @@ export class Ranger {
     }
     // else: in good range with LOS — hold position, just shoot
 
-    // Shooting logic
+    // Track target velocity for lead shots (clamped to max player speed)
+    if (this._lastTarget !== nearest) {
+      this._lastTargetX = nearest.x;
+      this._lastTargetY = nearest.y;
+      this._lastTarget  = nearest;
+    }
+    const rawTvx = (nearest.x - this._lastTargetX) / dt;
+    const rawTvy = (nearest.y - this._lastTargetY) / dt;
+    const tvMag  = Math.hypot(rawTvx, rawTvy);
+    const cap    = 210;
+    const tvx    = tvMag > cap ? (rawTvx / tvMag) * cap : rawTvx;
+    const tvy    = tvMag > cap ? (rawTvy / tvMag) * cap : rawTvy;
+    this._lastTargetX = nearest.x;
+    this._lastTargetY = nearest.y;
+
+    // Continue an in-progress burst
+    if (this._burstShotsLeft > 0) {
+      this._burstTimer -= dt;
+      if (this._burstTimer <= 0) {
+        if (this._hasLos(nearest)) this._fireAt(nearest, tvx, tvy);
+        this._burstShotsLeft--;
+        this._burstTimer = 0.18;
+        if (this._burstShotsLeft === 0) this._shootCooldown = 3.5;
+      }
+    }
+
+    // Start a new burst
     this._shootCooldown = Math.max(0, this._shootCooldown - dt);
-    if (this._shootCooldown === 0 && hasLos && dist <= this._preferDist + 40 && dist >= this._minDist) {
-      this._shootCooldown = 2.5;
-      const dx  = nearest.x - this.x;
-      const dy  = nearest.y - this.y;
-      const len = Math.hypot(dx, dy) || 1;
-      const speed = 130;
-      this.level.addEntity(new EnemyProjectile(this.level, this.x, this.y, (dx / len) * speed, (dy / len) * speed));
+    if (this._shootCooldown === 0 && this._burstShotsLeft === 0 &&
+        hasLos && dist <= this._preferDist + 40 && dist >= this._minDist) {
+      this._fireAt(nearest, tvx, tvy);
+      this._burstShotsLeft = 2;
+      this._burstTimer = 0.18;
     }
 
 
@@ -134,6 +163,25 @@ export class Ranger {
         }
       }
     }
+  }
+
+  _fireAt(target, tvx, tvy) {
+    const projSpeed = 160;
+    const dx   = target.x - this.x;
+    const dy   = target.y - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    let t      = dist / projSpeed;
+    let predX  = target.x + tvx * t;
+    let predY  = target.y + tvy * t;
+    t          = Math.hypot(predX - this.x, predY - this.y) / projSpeed;
+    predX      = target.x + tvx * t;
+    predY      = target.y + tvy * t;
+    const plen = Math.hypot(predX - this.x, predY - this.y) || 1;
+    this.level.addEntity(new EnemyProjectile(
+      this.level, this.x, this.y,
+      ((predX - this.x) / plen) * projSpeed,
+      ((predY - this.y) / plen) * projSpeed,
+    ));
   }
 
   _hasLos(target) {
