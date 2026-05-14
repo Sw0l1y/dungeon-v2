@@ -34,8 +34,9 @@ export class Enemy {
     this.level.removeEntity(this);
     const stats = this.level.game?.state?.stats;
     if (stats) stats.enemiesKilled++;
-    // Drop a soul orb for the necromancer to collect
-    this.level.addEntity(new SoulOrb(this.level, this.x, this.y));
+    // Drop a soul orb only when a necromancer is in the party
+    const hasNecro = this.level.players.some(p => p.classId === 'necromancer');
+    if (hasNecro) this.level.addEntity(new SoulOrb(this.level, this.x, this.y));
   }
 
   update(dt) {
