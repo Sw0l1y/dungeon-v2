@@ -8,8 +8,9 @@ export class Skeleton {
     this.owner     = owner;
     this.radius    = 11;
     this.speed     = 95;
-    this.maxHp     = 60;
-    this.hp        = 60;
+    const baseHp   = owner?.game?.state?.upgrades?.boneArmor ? 120 : 60;
+    this.maxHp     = baseHp;
+    this.hp        = baseHp;
     this.alive     = true;
     this.isMinion  = true;
     this._atkCooldown = 0;
@@ -30,6 +31,16 @@ export class Skeleton {
     this.level.removeEntity(this);
     if (this.owner) {
       this.owner._skeletons = this.owner._skeletons.filter(s => s !== this);
+      // Death Pact: explode for AoE on death
+      if (this.owner.game?.state?.upgrades?.deathPact) {
+        this.level.spawnDeathParticles?.(this.x, this.y, '#44ff88', 18);
+        for (const e of [...this.level.entities]) {
+          if (!e.isEnemy || !e.alive) continue;
+          if (Math.hypot(e.x - this.x, e.y - this.y) < 90) {
+            e.takeDamage(40, this.owner, 'melee');
+          }
+        }
+      }
     }
   }
 

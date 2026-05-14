@@ -49,8 +49,9 @@ export class Enemy {
     let nearest = null, nearestDist = Infinity;
     const decoys = this.level.entities.filter(e => e.isDecoy && e.alive);
     for (const d of decoys) {
-      const dist = Math.hypot(d.x - this.x, d.y - this.y);
-      if (dist < 300 && dist < nearestDist) { nearestDist = dist; nearest = d; }
+      const dist  = Math.hypot(d.x - this.x, d.y - this.y);
+      const range = d.aggroRange ?? 300;
+      if (dist < range && dist < nearestDist) { nearestDist = dist; nearest = d; }
     }
     if (!nearest) {
       for (const m of minions) {

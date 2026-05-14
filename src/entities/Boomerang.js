@@ -14,6 +14,9 @@ export class Boomerang {
     this._hitSet    = new Set();
     this._rotation  = 0;
     this._speed     = Math.hypot(vx, vy);
+    this._prevX     = x;
+    this._prevY     = y;
+    this._bounced   = false;   // wall-ricochet used
   }
 
   update(dt) {
@@ -39,6 +42,8 @@ export class Boomerang {
       this.vy = (dy / dist) * this._speed;
     }
 
+    this._prevX = this.x;
+    this._prevY = this.y;
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
@@ -51,7 +56,7 @@ export class Boomerang {
       }
     }
 
-    // Wall hit — flip to return if outgoing, remove if already returning
+    // Wall hit
     if (!this._noclip) {
       const { map, tileSize: ts } = this.level;
       const col     = Math.floor(this.x / ts);
@@ -59,7 +64,18 @@ export class Boomerang {
       const hitWall = row < 0 || row >= map.length || col < 0 || col >= map[0].length
                     || map[row][col] === 1 || map[row][col] === 2;
       if (hitWall) {
-        if (!this._returning) {
+        if (!this._returning && this._canRicochet && !this._bounced) {
+          // Reflect off wall normal, reset hit set so return pass is fresh
+          const prevCol = Math.floor(this._prevX / ts);
+          const prevRow = Math.floor(this._prevY / ts);
+          if (prevCol !== col) this.vx = -this.vx;
+          if (prevRow !== row) this.vy = -this.vy;
+          if (prevCol === col && prevRow === row) { this.vx = -this.vx; this.vy = -this.vy; }
+          this.x = this._prevX;
+          this.y = this._prevY;
+          this._bounced = true;
+          this._hitSet.clear();
+        } else if (!this._returning) {
           this._returning = true;
           this._hitSet.clear();
         } else {

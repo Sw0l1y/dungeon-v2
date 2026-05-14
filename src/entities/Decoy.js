@@ -1,21 +1,47 @@
 export class Decoy {
   constructor(level, x, y, owner) {
-    this.level    = level;
-    this.x        = x;
-    this.y        = y;
-    this.owner    = owner;
-    this.radius   = 10;
-    this._lifetime = 4.0;
-    this.isDecoy  = true;
-    this.alive    = true;
-    this.hp       = 1;  // enemies "attack" decoy via contact; we just remove it on timer
+    this.level      = level;
+    this.x          = x;
+    this.y          = y;
+    this.owner      = owner;
+    this.radius     = 10;
+    const upg       = owner.game.state.upgrades;
+    this._lifetime  = upg?.extendedLure ? 7.0 : 4.0;
+    this.aggroRange = upg?.extendedLure ? 500  : 300;
+    this._volatile  = !!upg?.volatileDecoy;
+    this.isDecoy    = true;
+    this.alive      = true;
+  }
+
+  _explode() {
+    this.alive = false;
+    this.level.removeEntity(this);
+    this.level.spawnDeathParticles?.(this.x, this.y, this.owner.color, 16);
+    for (const e of [...this.level.entities]) {
+      if (!e.isEnemy || !e.alive) continue;
+      if (Math.hypot(e.x - this.x, e.y - this.y) < 80) {
+        e.takeDamage(50, this.owner, 'ranged');
+      }
+    }
   }
 
   update(dt) {
     this._lifetime -= dt;
     if (this._lifetime <= 0) {
-      this.alive = false;
-      this.level.removeEntity(this);
+      if (this._volatile) this._explode();
+      else { this.alive = false; this.level.removeEntity(this); }
+      return;
+    }
+
+    // Volatile: explode if an enemy contacts the decoy
+    if (this._volatile) {
+      for (const e of this.level.entities) {
+        if (!e.isEnemy || !e.alive) continue;
+        if (Math.hypot(e.x - this.x, e.y - this.y) < e.radius + this.radius + 4) {
+          this._explode();
+          return;
+        }
+      }
     }
   }
 

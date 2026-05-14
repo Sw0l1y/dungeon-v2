@@ -25,9 +25,23 @@ const ITEMS = [
   { id: 'salvage',     cat: 'utility', classId: null,     name: 'Salvage',      icon: 'salvage',   tiers: 1, costs: [60],          desc: 'Destroyed walls drop gold shards.',  extra: 'Pairs well with Wall Breaker.' },
   { id: 'wallBreaker', cat: 'utility', classId: null,     name: 'Wall Breaker', icon: 'wallbreak', tiers: 1, costs: [100],         desc: '[E/O] shatters walls in 120px.',     extra: '1 charge per room.' },
   // ── Class ────────────────────────────────────────────────────────────────
-  { id: 'overcharge',  cat: 'class',   classId: 'sword',  name: 'Overcharge',   icon: 'overcharge',tiers: 2, costs: [100,150],     desc: 'Hold attack to charge. Full = 2.5–3× dmg.', extra: 'Sword only.' },
-  { id: 'ricochet',    cat: 'class',   classId: 'archer', name: 'Ricochet',     icon: 'ricochet',  tiers: 1, costs: [80],          desc: 'Arrows bounce off walls once.',      extra: 'Archer only.' },
-  { id: 'shadowChain', cat: 'class',   classId: 'rogue',  name: 'Shadow Chain', icon: 'shadow',    tiers: 1, costs: [90],          desc: 'Ricochet dash chains 6 enemies.',    extra: 'Rogue only.' },
+  { id: 'overcharge',  cat: 'class',   classId: 'sword',      name: 'Overcharge',      icon: 'overcharge', tiers: 2, costs: [100,150], desc: 'Hold attack to charge. Full = 2.5–3× dmg.',  extra: 'Sword only.' },
+  { id: 'ricochet',    cat: 'class',   classId: 'archer',     name: 'Ricochet',        icon: 'ricochet',   tiers: 1, costs: [80],      desc: 'Arrows bounce off walls once.',             extra: 'Archer only.' },
+  { id: 'shadowChain', cat: 'class',   classId: 'rogue',      name: 'Shadow Chain',    icon: 'shadow',     tiers: 1, costs: [90],      desc: 'Ricochet dash chains 6 enemies.',            extra: 'Rogue only.' },
+  // ── Trickster ────────────────────────────────────────────────────────────
+  { id: 'boomRicochet',  cat: 'class', classId: 'trickster',  name: 'Wall Bounce',     icon: 'ricochet',   tiers: 1, costs: [90],      desc: 'Boomerang bounces off a wall before returning.', extra: 'Trickster only.' },
+  { id: 'twinRang',      cat: 'class', classId: 'trickster',  name: 'Twin Rang',       icon: 'atkspd',     tiers: 1, costs: [120],     desc: 'Fire two boomerangs at a slight spread.',        extra: 'Trickster only.' },
+  { id: 'sharpenedEdge', cat: 'class', classId: 'trickster',  name: 'Sharpened Edge',  icon: 'bleed',      tiers: 1, costs: [80],      desc: 'Boomerang damage 22 → 35 per pass.',             extra: 'Trickster only.' },
+  { id: 'volatileDecoy', cat: 'class', classId: 'trickster',  name: 'Volatile Decoy',  icon: 'overcharge', tiers: 1, costs: [100],     desc: 'Decoy explodes for 50 AoE when hit or expired.', extra: 'Trickster only.' },
+  { id: 'extendedLure',  cat: 'class', classId: 'trickster',  name: 'Extended Lure',   icon: 'momentum',   tiers: 1, costs: [80],      desc: 'Decoy lasts 7s, draws aggro from 500px.',        extra: 'Trickster only.' },
+  { id: 'doubleDecoy',   cat: 'class', classId: 'trickster',  name: 'Double Decoy',    icon: 'shadow',     tiers: 1, costs: [110],     desc: 'Drop two decoys at once.',                       extra: 'Trickster only.' },
+  // ── Necromancer ──────────────────────────────────────────────────────────
+  { id: 'greedyDrain',   cat: 'class', classId: 'necromancer',name: 'Greedy Drain',    icon: 'bounty',     tiers: 1, costs: [90],      desc: 'Drain kills grant +1 bonus orb.',                extra: 'Necromancer only.' },
+  { id: 'extendedReach', cat: 'class', classId: 'necromancer',name: 'Extended Reach',  icon: 'speed',      tiers: 1, costs: [80],      desc: 'Soul drain range 240 → 340.',                    extra: 'Necromancer only.' },
+  { id: 'ravenous',      cat: 'class', classId: 'necromancer',name: 'Ravenous',        icon: 'flask',      tiers: 1, costs: [100],     desc: 'Lifesteal 35%→60%, drain dmg 30→20/s.',         extra: 'Necromancer only.' },
+  { id: 'boneArmor',     cat: 'class', classId: 'necromancer',name: 'Bone Armor',      icon: 'maxhp',      tiers: 1, costs: [90],      desc: 'Skeletons spawn with 120 HP (was 60).',          extra: 'Necromancer only.' },
+  { id: 'undyingLegion', cat: 'class', classId: 'necromancer',name: 'Undying Legion',  icon: 'revive',     tiers: 1, costs: [110],     desc: 'Max skeletons raised from 2 → 3.',               extra: 'Necromancer only.' },
+  { id: 'deathPact',     cat: 'class', classId: 'necromancer',name: 'Death Pact',      icon: 'glass',      tiers: 1, costs: [100],     desc: 'Skeletons explode for 40 AoE on death.',         extra: 'Necromancer only.' },
 ];
 
 export function defaultUpgrades() {
@@ -36,6 +50,12 @@ export function defaultUpgrades() {
     flaskBought: false, pendingHeal: false, reviveBoost: false,
     glassCannon: false, momentum: false, bleed: false, bounty: false,
     salvage: false, wallBreaker: false, ricochet: false, shadowChain: false,
+    // Trickster
+    boomRicochet: false, twinRang: false, sharpenedEdge: false,
+    volatileDecoy: false, extendedLure: false, doubleDecoy: false,
+    // Necromancer
+    greedyDrain: false, extendedReach: false, ravenous: false,
+    boneArmor: false, undyingLegion: false, deathPact: false,
   };
 }
 

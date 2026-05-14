@@ -479,8 +479,10 @@ export class Player {
       if (this._devMode) proj._noclip = true;
       this.level.addEntity(proj);
     } else if (this.classId === 'trickster') {
+      const upg    = this.game.state.upgrades;
       this._atkCooldown = 0.55 / this._weaponSpeedMult;
       const speed  = 290 * this._weaponSpeedMult;
+      const dmg    = upg?.sharpenedEdge ? 35 : 22;
       const target = this._nearestEnemy();
       let dirX = this._facingX, dirY = this._facingY;
       if (target) {
@@ -489,16 +491,24 @@ export class Player {
         dirX = dx / len;
         dirY = dy / len;
       }
-      const bm = new Boomerang(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
-      if (this._devMode) bm._noclip = true;
-      this.level.addEntity(bm);
+      const angles = upg?.twinRang
+        ? [Math.atan2(dirY, dirX) - 0.14, Math.atan2(dirY, dirX) + 0.14]
+        : [Math.atan2(dirY, dirX)];
+      for (const a of angles) {
+        const bm = new Boomerang(this.level, this.x, this.y, Math.cos(a) * speed, Math.sin(a) * speed, this);
+        bm.damage = dmg;
+        if (upg?.boomRicochet) bm._canRicochet = true;
+        if (this._devMode) bm._noclip = true;
+        this.level.addEntity(bm);
+      }
     }
   }
 
   _updateDrain(dt) {
-    const DRAIN_RATE = 30;   // damage per second
-    const LIFESTEAL  = 0.35; // fraction of damage converted to HP
-    const RANGE      = 240;
+    const upg        = this.game.state.upgrades;
+    const DRAIN_RATE = upg?.ravenous ? 20   : 30;
+    const LIFESTEAL  = upg?.ravenous ? 0.60 : 0.35;
+    const RANGE      = upg?.extendedReach ? 340 : 240;
 
     if (!this.binding.isHeld('attack') || !this.alive) {
       this._draining = false;
@@ -517,9 +527,15 @@ export class Player {
     if (!this._drainTarget) { this._draining = false; return; }
 
     this._draining = true;
-    const dmg = DRAIN_RATE * dt;
+    const wasAlive = this._drainTarget.alive;
+    const dmg      = DRAIN_RATE * dt;
     this._drainTarget.takeDamage(dmg, this, 'ranged');
     this.hp = Math.min(this.maxHp, this.hp + dmg * LIFESTEAL);
+
+    // Greedy Drain: bonus orb when the drain delivers the killing blow
+    if (wasAlive && !this._drainTarget.alive && upg?.greedyDrain) {
+      this._orbCount = Math.min(this._maxOrbs, this._orbCount + 1);
+    }
   }
 
   _drawDrainBeam(ctx) {
@@ -580,16 +596,24 @@ export class Player {
   }
 
   _dropDecoy() {
+    const upg = this.game.state.upgrades;
     this._abilityCooldown = this._abilityMaxCooldown;
-    if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
+    if (upg?.momentum) this._momentumTimer = 1.5;
     this.level.addEntity(new Decoy(this.level, this.x, this.y, this));
+    if (upg?.doubleDecoy) {
+      // Second decoy offset perpendicular to facing
+      const ox = -this._facingY * 28;
+      const oy =  this._facingX * 28;
+      this.level.addEntity(new Decoy(this.level, this.x + ox, this.y + oy, this));
+    }
   }
 
   _summonSkeleton() {
     const ORB_COST = 3;
     if (this._orbCount < ORB_COST && !this._devMode) return;
 
-    if (this._skeletons.length >= this._maxSkeletons) {
+    const maxSk = this.game.state.upgrades?.undyingLegion ? 3 : this._maxSkeletons;
+    if (this._skeletons.length >= maxSk) {
       const oldest = this._skeletons.shift();
       oldest.die();
     }
