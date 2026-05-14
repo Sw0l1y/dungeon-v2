@@ -22,6 +22,18 @@ const CLASSES = [
     lines: ['Dash through enemies', 'Invincible during dash'],
     key:  'Space  /  Enter',
   },
+  {
+    id:   'trickster',
+    name: 'Trickster',
+    lines: ['Boomerang hits twice', 'Q: Drop decoy (draws aggro)'],
+    key:  'Space  /  Enter',
+  },
+  {
+    id:   'necromancer',
+    name: 'Necromancer',
+    lines: ['Weak soul bolt', 'Q: Summon skeleton (max 2)'],
+    key:  'Space  /  Enter',
+  },
 ];
 
 const CARD_W   = 180;

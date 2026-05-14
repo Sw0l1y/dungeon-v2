@@ -1,11 +1,17 @@
 import { SwordSwing } from './SwordSwing.js';
 import { Projectile  } from './Projectile.js';
 import { HomingArrow } from './HomingArrow.js';
+import { Boomerang   } from './Boomerang.js';
+import { Decoy       } from './Decoy.js';
+import { NecroShot   } from './NecroShot.js';
+import { Skeleton    } from './Skeleton.js';
 
 const ABILITY_COOLDOWNS = {
-  sword:  6.0,
-  rogue:  10.0,
-  archer: 7.5,
+  sword:      6.0,
+  rogue:      10.0,
+  archer:     7.5,
+  trickster:  9.0,
+  necromancer: 8.0,
 };
 
 export class Player {
@@ -19,8 +25,14 @@ export class Player {
     this.x = x;
     this.y = y;
     this.radius = 12;
-    this.speed  = classId === 'sword' ? 205 : 180;
-    this.maxHp  = classId === 'sword' ? 180 : 100;
+    this.speed  = classId === 'sword' ? 205
+                : classId === 'trickster' ? 185
+                : classId === 'necromancer' ? 170
+                : 180;
+    this.maxHp  = classId === 'sword' ? 180
+                : classId === 'trickster' ? 110
+                : classId === 'necromancer' ? 90
+                : 100;
     this.hp     = this.maxHp;
     this.alive  = true;
     this._devMode = name === 'dev_1';
@@ -69,6 +81,9 @@ export class Player {
     this._chargeTimer      = 0;      // overcharge: seconds held
     this._wasHoldingAttack = false;  // previous frame attack-held state (overcharge)
     this._wallBreakerUsed  = false;  // consumed when wall breaker item fires
+    // Necromancer minions
+    this._skeletons    = [];
+    this._maxSkeletons = 2;
   }
 
   takeDamage(amount) {
@@ -97,7 +112,8 @@ export class Player {
     if (!this.alive) return;
     const { x: ax, y: ay } = this.binding.axes;
 
-    if (this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') {
+    if (this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword'
+     || this.classId === 'trickster' || this.classId === 'necromancer') {
       // Auto-aim: face the most threatening enemy
       const target = this._nearestEnemy();
       if (target) {
@@ -242,6 +258,10 @@ export class Player {
       this._ricochetDash();
     } else if (this.classId === 'archer') {
       this._homingVolley();
+    } else if (this.classId === 'trickster') {
+      this._dropDecoy();
+    } else if (this.classId === 'necromancer') {
+      this._summonSkeleton();
     }
   }
 
@@ -448,7 +468,59 @@ export class Player {
       if (this.game.state.upgrades?.ricochet) proj._canRicochet = true;
       if (this._devMode) proj._noclip = true;
       this.level.addEntity(proj);
+    } else if (this.classId === 'trickster') {
+      this._atkCooldown = 0.55 / this._weaponSpeedMult;
+      const speed  = 290 * this._weaponSpeedMult;
+      const target = this._nearestEnemy();
+      let dirX = this._facingX, dirY = this._facingY;
+      if (target) {
+        const dx = target.x - this.x, dy = target.y - this.y;
+        const len = Math.hypot(dx, dy) || 1;
+        dirX = dx / len;
+        dirY = dy / len;
+      }
+      const bm = new Boomerang(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
+      if (this._devMode) bm._noclip = true;
+      this.level.addEntity(bm);
+    } else if (this.classId === 'necromancer') {
+      this._atkCooldown = 0.7 / this._weaponSpeedMult;
+      const speed  = 200 * this._weaponSpeedMult;
+      const target = this._nearestEnemy();
+      let dirX = this._facingX, dirY = this._facingY;
+      if (target) {
+        const dx = target.x - this.x, dy = target.y - this.y;
+        const len = Math.hypot(dx, dy) || 1;
+        dirX = dx / len;
+        dirY = dy / len;
+      }
+      const shot = new NecroShot(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
+      if (this._devMode) shot._noclip = true;
+      this.level.addEntity(shot);
     }
+  }
+
+  _dropDecoy() {
+    this._abilityCooldown = this._abilityMaxCooldown;
+    if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
+    this.level.addEntity(new Decoy(this.level, this.x, this.y, this));
+  }
+
+  _summonSkeleton() {
+    // Remove oldest minion if already at cap
+    if (this._skeletons.length >= this._maxSkeletons) {
+      const oldest = this._skeletons.shift();
+      oldest.die();
+    }
+    // Spawn slightly offset from player
+    const angle  = Math.random() * Math.PI * 2;
+    const offset = this.radius + 20;
+    const sx = this.x + Math.cos(angle) * offset;
+    const sy = this.y + Math.sin(angle) * offset;
+    const sk = new Skeleton(this.level, sx, sy, this);
+    this._skeletons.push(sk);
+    this.level.addEntity(sk);
+    this._abilityCooldown = this._abilityMaxCooldown;
+    if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
   }
 
   /** Fire an overcharged sword swing — called by the overcharge hold-release logic. */
@@ -697,8 +769,9 @@ export class Player {
 
     if (this._lunging) this._drawLungeArc(ctx);
 
-    // Crosshair over aim target (archer + rogue + sword)
-    if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword') && this._aimTarget?.alive) {
+    // Crosshair over aim target
+    if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword'
+      || this.classId === 'trickster' || this.classId === 'necromancer') && this._aimTarget?.alive) {
       this._drawCrosshair(ctx);
     }
 
