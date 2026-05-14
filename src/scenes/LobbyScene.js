@@ -227,6 +227,8 @@ export class LobbyScene extends Scene {
   }
 
   _startGame() {
+    this.game.state.netSession = null;
+    this.game.state.netRole    = null;
     this.game.state.players = this._slots
       .filter(s => s.active)
       .map((s, i) => ({
