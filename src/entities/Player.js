@@ -514,22 +514,44 @@ export class Player {
     const ORB_COST = 3;
     if (this._orbCount < ORB_COST && !this._devMode) return;
 
-    // Remove oldest minion if already at cap
     if (this._skeletons.length >= this._maxSkeletons) {
       const oldest = this._skeletons.shift();
       oldest.die();
     }
     this._orbCount = Math.max(0, this._orbCount - ORB_COST);
 
-    const angle  = Math.random() * Math.PI * 2;
-    const offset = this.radius + 20;
-    const sx = this.x + Math.cos(angle) * offset;
-    const sy = this.y + Math.sin(angle) * offset;
+    const { x: sx, y: sy } = this._findValidSpawn(this.x, this.y, 11);
     const sk = new Skeleton(this.level, sx, sy, this);
     this._skeletons.push(sk);
     this.level.addEntity(sk);
-    this._abilityCooldown = 1.5;   // short cooldown to prevent double-tap
+    // Green summoning burst
+    this.level.spawnDeathParticles(sx, sy, '#44ff88', 14);
+    this._abilityCooldown = 1.5;
     if (this.game.state.upgrades?.momentum) this._momentumTimer = 1.5;
+  }
+
+  _findValidSpawn(cx, cy, entityRadius) {
+    const { map, tileSize: ts } = this.level;
+    const r = entityRadius - 2;
+    const blocked = (x, y) => {
+      for (const [px, py] of [[x-r,y-r],[x+r,y-r],[x-r,y+r],[x+r,y+r]]) {
+        const col = Math.floor(px / ts);
+        const row = Math.floor(py / ts);
+        if (row < 0 || row >= map.length || col < 0 || col >= map[0].length) return true;
+        if (map[row][col] === 1 || map[row][col] === 2) return true;
+      }
+      return false;
+    };
+    // Try 16 evenly-spaced angles at increasing distances until we find open floor
+    for (let dist = this.radius + 22; dist <= this.radius + 80; dist += 12) {
+      for (let i = 0; i < 16; i++) {
+        const angle = (i / 16) * Math.PI * 2;
+        const x = cx + Math.cos(angle) * dist;
+        const y = cy + Math.sin(angle) * dist;
+        if (!blocked(x, y)) return { x, y };
+      }
+    }
+    return { x: cx, y: cy }; // fallback: player's own tile (always open)
   }
 
   /** Fire an overcharged sword swing — called by the overcharge hold-release logic. */
