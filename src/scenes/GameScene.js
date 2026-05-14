@@ -11,6 +11,7 @@ import { Portal         } from '../entities/Portal.js';
 import { Projectile     } from '../entities/Projectile.js';
 import { SwordSwing     } from '../entities/SwordSwing.js';
 import { EnemyProjectile} from '../entities/EnemyProjectile.js';
+import { Decoy          } from '../entities/Decoy.js';
 
 export class GameScene extends Scene {
   onEnter() {
@@ -96,6 +97,9 @@ export class GameScene extends Scene {
     // Per-local-player ability latch — set when abilityA is pressed, cleared after
     // the next input packet is sent so presses between 60hz frames aren't dropped.
     this._abilityLatch = [];
+    // Host-side: which players fired an ability this frame (echoed to client in gs packet)
+    this._abilityFiredSync    = [];
+    this._prevAbilityCooldown = [];
 
     if (this._net) {
       this._net.onMessage      = (data, peerId) => this._onNetMsg(data, peerId);
@@ -359,6 +363,12 @@ export class GameScene extends Scene {
     // (including the new ability latch) are cleared for the next frame.
     if (this._netRole === 'host') {
       for (const rb of this._remoteBindings) rb.flush();
+      // Detect which players fired an ability this frame (cooldown 0→non-zero transition)
+      for (let i = 0; i < this.level.players.length; i++) {
+        const cd = this.level.players[i]._abilityCooldown;
+        this._abilityFiredSync[i] = (this._prevAbilityCooldown[i] ?? 0) === 0 && cd > 0;
+        this._prevAbilityCooldown[i] = cd;
+      }
     }
 
     // ── Client-side movement smoothing (all remote entities) ─────────────────
@@ -806,6 +816,8 @@ export class GameScene extends Scene {
           : undefined,
         // Wall Breaker used flag — so client shows correct indicator
         wb: pl._wallBreakerUsed ? 1 : undefined,
+        // Ability fired this frame — client spawns matching visual for remote players
+        ab: this._abilityFiredSync[i] ? 1 : undefined,
       })),
       // Enemies: full [netId, typeIdx, x, y, hpPct0-255] OR compact [netId] (alive, pos unchanged).
       // Compact entries save bandwidth when enemies are stationary; client keeps last known pos.
@@ -1037,6 +1049,16 @@ export class GameScene extends Scene {
 
         // Wall Breaker used state — keep indicator in sync on client
         if (pd.wb !== undefined) pl._wallBreakerUsed = !!pd.wb;
+
+        // Ability echo — spawn decoy on client for remote players at authoritative position
+        if (pd.ab && isRemote && pl.classId === 'trickster') {
+          const upg   = pl.game.state.upgrades;
+          this.level.addEntity(new Decoy(this.level, pd.x, pd.y, pl));
+          if (upg?.doubleDecoy) {
+            const angle = Math.atan2(pl._facingY, pl._facingX) + Math.PI / 2;
+            this.level.addEntity(new Decoy(this.level, pd.x + Math.cos(angle) * 28, pd.y + Math.sin(angle) * 28, pl));
+          }
+        }
 
         // Rogue trail sync — apply received trail arrays so the visual plays on both screens
         if (pd.dt !== undefined) {
