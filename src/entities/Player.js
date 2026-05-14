@@ -486,10 +486,22 @@ export class Player {
       const target = this._nearestEnemy();
       let dirX = this._facingX, dirY = this._facingY;
       if (target) {
-        const dx = target.x - this.x, dy = target.y - this.y;
-        const len = Math.hypot(dx, dy) || 1;
-        dirX = dx / len;
-        dirY = dy / len;
+        const dx   = target.x - this.x;
+        const dy   = target.y - this.y;
+        const dist = Math.hypot(dx, dy) || 1;
+        // Lead the target using enemy's own speed for accurate prediction
+        const enemySpeed = target.speed ?? 75;
+        const evx  = (-dx / dist) * enemySpeed;
+        const evy  = (-dy / dist) * enemySpeed;
+        let t      = dist / speed;
+        let predX  = target.x + evx * t;
+        let predY  = target.y + evy * t;
+        t          = Math.hypot(predX - this.x, predY - this.y) / speed;
+        predX      = target.x + evx * t;
+        predY      = target.y + evy * t;
+        const plen = Math.hypot(predX - this.x, predY - this.y) || 1;
+        dirX = (predX - this.x) / plen;
+        dirY = (predY - this.y) / plen;
       }
       const angles = upg?.twinRang
         ? [Math.atan2(dirY, dirX) - 0.14, Math.atan2(dirY, dirX) + 0.14]
