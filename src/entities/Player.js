@@ -899,7 +899,7 @@ export class Player {
       const pipR  = 3.5;
       const gap   = 9;
       const startX = this.x - ((total - 1) * gap) / 2;
-      const py2    = barY + 8;
+      const py2    = barY - 10;
       for (let i = 0; i < total; i++) {
         const filled = i < this._orbCount;
         const isThreshold = i === ORB_COST - 1 || i === total - 1;
