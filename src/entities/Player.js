@@ -66,6 +66,9 @@ export class Player {
     this._ricochetTrail = [];
     // Archer / rogue targeting
     this._aimTarget = null;
+    // Necromancer soul drain
+    this._draining    = false;
+    this._drainTarget = null;
     // Knockback impulse (set externally, decays each frame)
     this._knockbackVx = 0;
     this._knockbackVy = 0;
@@ -222,7 +225,9 @@ export class Player {
 
     // ── Attack / Overcharge ────────────────────────────────────────────────────
     const overchargeTier = this.game.state.upgrades?.overchargeTier ?? 0;
-    if (this.classId === 'sword' && overchargeTier > 0 && !this._devMode) {
+    if (this.classId === 'necromancer') {
+      this._updateDrain(dt);
+    } else if (this.classId === 'sword' && overchargeTier > 0 && !this._devMode) {
       // Overcharge: hold attack to build charge; release to fire scaled swing
       const holding  = this.binding.isHeld('attack');
       const released = this._wasHoldingAttack && !holding;
@@ -487,21 +492,91 @@ export class Player {
       const bm = new Boomerang(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
       if (this._devMode) bm._noclip = true;
       this.level.addEntity(bm);
-    } else if (this.classId === 'necromancer') {
-      this._atkCooldown = 0.7 / this._weaponSpeedMult;
-      const speed  = 200 * this._weaponSpeedMult;
-      const target = this._nearestEnemy();
-      let dirX = this._facingX, dirY = this._facingY;
-      if (target) {
-        const dx = target.x - this.x, dy = target.y - this.y;
-        const len = Math.hypot(dx, dy) || 1;
-        dirX = dx / len;
-        dirY = dy / len;
-      }
-      const shot = new NecroShot(this.level, this.x, this.y, dirX * speed, dirY * speed, this);
-      if (this._devMode) shot._noclip = true;
-      this.level.addEntity(shot);
     }
+  }
+
+  _updateDrain(dt) {
+    const DRAIN_RATE = 30;   // damage per second
+    const LIFESTEAL  = 0.35; // fraction of damage converted to HP
+    const RANGE      = 185;
+
+    if (!this.binding.isHeld('attack') || !this.alive) {
+      this._draining = false;
+      this._drainTarget = null;
+      return;
+    }
+
+    // Re-validate or acquire target
+    const tgt = this._drainTarget;
+    if (!tgt?.alive || Math.hypot(tgt.x - this.x, tgt.y - this.y) > RANGE) {
+      const candidate = this._nearestEnemy();
+      this._drainTarget = (candidate && Math.hypot(candidate.x - this.x, candidate.y - this.y) <= RANGE)
+        ? candidate : null;
+    }
+
+    if (!this._drainTarget) { this._draining = false; return; }
+
+    this._draining = true;
+    const dmg = DRAIN_RATE * dt;
+    this._drainTarget.takeDamage(dmg, this, 'ranged');
+    this.hp = Math.min(this.maxHp, this.hp + dmg * LIFESTEAL);
+  }
+
+  _drawDrainBeam(ctx) {
+    const e = this._drainTarget;
+    if (!e?.alive) return;
+
+    const t   = Date.now();
+    const dx  = e.x - this.x;
+    const dy  = e.y - this.y;
+    const len = Math.hypot(dx, dy) || 1;
+
+    ctx.save();
+
+    // Outer halo
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth   = 18;
+    ctx.lineCap     = 'round';
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(e.x, e.y); ctx.stroke();
+
+    // Mid glow
+    ctx.globalAlpha = 0.30;
+    ctx.lineWidth   = 7;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(e.x, e.y); ctx.stroke();
+
+    // Animated dashed core — dashes flow from enemy toward player
+    ctx.globalAlpha = 0.75 + 0.15 * Math.sin(t / 80);
+    ctx.strokeStyle = '#d7a8ff';
+    ctx.lineWidth   = 2;
+    ctx.setLineDash([7, 5]);
+    ctx.lineDashOffset = -(t / 40) % 12;
+    ctx.beginPath(); ctx.moveTo(this.x, this.y); ctx.lineTo(e.x, e.y); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Orbs flowing from enemy to player
+    for (let i = 0; i < 5; i++) {
+      const frac  = ((t / 280 + i * 0.2) % 1);           // 0 = enemy side, 1 = player side
+      const ox    = e.x + (this.x - e.x) * frac;
+      const oy    = e.y + (this.y - e.y) * frac;
+      const alpha = 0.9 * Math.sin(frac * Math.PI);       // fade at both endpoints
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle   = '#c39bd3';
+      ctx.beginPath(); ctx.arc(ox, oy, 3.5, 0, Math.PI * 2); ctx.fill();
+      // White center
+      ctx.globalAlpha = alpha * 0.75;
+      ctx.fillStyle   = '#ffffff';
+      ctx.beginPath(); ctx.arc(ox, oy, 1.4, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // Pulsing drain ring on the enemy
+    const pulse = 0.28 + 0.18 * Math.sin(t / 110);
+    ctx.globalAlpha = pulse;
+    ctx.strokeStyle = '#9b59b6';
+    ctx.lineWidth   = 2.5;
+    ctx.beginPath(); ctx.arc(e.x, e.y, e.radius + 7, 0, Math.PI * 2); ctx.stroke();
+
+    ctx.restore();
   }
 
   _dropDecoy() {
@@ -799,6 +874,7 @@ export class Player {
     ctx.restore();
 
     if (this._lunging) this._drawLungeArc(ctx);
+    if (this._draining) this._drawDrainBeam(ctx);
 
     // Crosshair over aim target
     if ((this.classId === 'archer' || this.classId === 'rogue' || this.classId === 'sword'
