@@ -1,4 +1,5 @@
-import { astar } from '../systems/Pathfinding.js';
+import { astar    } from '../systems/Pathfinding.js';
+import { SoulOrb } from './SoulOrb.js';
 
 export const PULSAR_COLOR  = '#22ff55';
 const PROX_RADIUS   = 46;    // player within this → explode
@@ -92,6 +93,8 @@ export class Pulsar {
     this.level.spawnDeathParticles(this.x, this.y, PULSAR_COLOR, 14);
     this.level.removeEntity(this);
     if (this.level.game?.state?.stats) this.level.game.state.stats.enemiesKilled++;
+    const hasNecro = this.level.players.some(p => p.classId === 'necromancer');
+    if (hasNecro) this.level.addEntity(new SoulOrb(this.level, this.x, this.y));
   }
 
   update(dt) {
@@ -118,16 +121,32 @@ export class Pulsar {
       }
     }
 
-    // Pathfind slowly toward nearest player
+    // Pathfind slowly toward highest-priority target
     const players = this.level.players.filter(p => p.alive);
-    if (players.length === 0) return;
+    const minions  = this.level.entities.filter(e => e.isMinion && e.alive);
+    if (players.length === 0 && minions.length === 0) return;
 
-    let nearest = players[0];
-    let nearD   = Math.hypot(nearest.x - this.x, nearest.y - this.y);
-    for (const p of players) {
-      const d = Math.hypot(p.x - this.x, p.y - this.y);
-      if (d < nearD) { nearD = d; nearest = p; }
+    let nearest = null, nearD = Infinity;
+    const decoys = this.level.entities.filter(e => e.isDecoy && e.alive);
+    for (const d of decoys) {
+      const dist = Math.hypot(d.x - this.x, d.y - this.y);
+      const range = d.aggroRange ?? 300;
+      if (dist < range && dist < nearD) { nearD = dist; nearest = d; }
     }
+    if (!nearest) {
+      for (const m of minions) {
+        const dist = Math.hypot(m.x - this.x, m.y - this.y);
+        if (dist < 200 && dist < nearD) { nearD = dist; nearest = m; }
+      }
+    }
+    if (!nearest) {
+      nearD = Infinity;
+      for (const p of players) {
+        const d = Math.hypot(p.x - this.x, p.y - this.y);
+        if (d < nearD) { nearD = d; nearest = p; }
+      }
+    }
+    if (!nearest) return;
 
     this._pathTimer -= dt;
     if (this._pathTimer <= 0 || this._path.length === 0) {

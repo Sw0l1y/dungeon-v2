@@ -1,5 +1,6 @@
-import { astar } from '../systems/Pathfinding.js';
+import { astar            } from '../systems/Pathfinding.js';
 import { EnemyProjectile } from './EnemyProjectile.js';
+import { SoulOrb         } from './SoulOrb.js';
 
 export class Ranger {
   constructor(level, x, y) {
@@ -37,19 +38,37 @@ export class Ranger {
     this.level.removeEntity(this);
     const stats = this.level.game?.state?.stats;
     if (stats) stats.enemiesKilled++;
+    const hasNecro = this.level.players.some(p => p.classId === 'necromancer');
+    if (hasNecro) this.level.addEntity(new SoulOrb(this.level, this.x, this.y));
   }
 
   update(dt) {
     if (!this.alive) return;
 
     const players = this.level.players.filter(p => p.alive);
-    if (players.length === 0) return;
+    const minions  = this.level.entities.filter(e => e.isMinion && e.alive);
+    if (players.length === 0 && minions.length === 0) return;
 
-    // Target nearest player
+    // Priority: decoy > minion > nearest player
     let nearest = null, nearestDist = Infinity;
-    for (const p of players) {
-      const d = Math.hypot(p.x - this.x, p.y - this.y);
-      if (d < nearestDist) { nearestDist = d; nearest = p; }
+    const decoys = this.level.entities.filter(e => e.isDecoy && e.alive);
+    for (const d of decoys) {
+      const dist  = Math.hypot(d.x - this.x, d.y - this.y);
+      const range = d.aggroRange ?? 300;
+      if (dist < range && dist < nearestDist) { nearestDist = dist; nearest = d; }
+    }
+    if (!nearest) {
+      for (const m of minions) {
+        const dist = Math.hypot(m.x - this.x, m.y - this.y);
+        if (dist < 200 && dist < nearestDist) { nearestDist = dist; nearest = m; }
+      }
+    }
+    if (!nearest) {
+      nearestDist = Infinity;
+      for (const p of players) {
+        const d = Math.hypot(p.x - this.x, p.y - this.y);
+        if (d < nearestDist) { nearestDist = d; nearest = p; }
+      }
     }
     if (!nearest) return;
 
