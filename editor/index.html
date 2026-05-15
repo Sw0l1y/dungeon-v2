@@ -1259,26 +1259,29 @@ function placeDoorSlot(col, row) {
   const room = curRoom(); if (!room) return;
   const dir = slotDirFromPos(room, col, row);
   if (!dir) { showToast('Door slots must be on a border wall'); return; }
-  // Clamp center so 3-tile passage fits
   if (!room.doorSlots) room.doorSlots = [];
-  if (dir === 'N' || dir === 'S') {
-    col = Math.max(1, Math.min(room.cols - 2, col));
-    row = dir === 'N' ? 0 : room.rows - 1;
-  } else {
-    row = Math.max(1, Math.min(room.rows - 2, row));
-    col = dir === 'E' ? room.cols - 1 : 0;
-  }
-  const existing = room.doorSlots.findIndex(s => s.col === col && s.row === row && s.dir === dir);
-  if (existing >= 0) {
-    // Remove the slot and also remove any connections referencing it
-    const removedId = room.doorSlots[existing].id;
-    room.doorSlots.splice(existing, 1);
+
+  // Check if the clicked tile falls inside any existing slot's 3-tile passage
+  const hitIdx = room.doorSlots.findIndex(s =>
+    doorSlotTiles(room, s).some(([tr, tc]) => tr === row && tc === col)
+  );
+  if (hitIdx >= 0) {
+    const removedId = room.doorSlots[hitIdx].id;
+    room.doorSlots.splice(hitIdx, 1);
     if (curDungeon()) curDungeon().connections = (curDungeon().connections ?? []).filter(c =>
       !(c.roomA === room.id && c.slotA === removedId) &&
       !(c.roomB === room.id && c.slotB === removedId)
     );
     showToast('Door slot removed');
   } else {
+    // Place new slot — clamp center so the 3-tile passage fits within the border
+    if (dir === 'N' || dir === 'S') {
+      col = Math.max(1, Math.min(room.cols - 2, col));
+      row = dir === 'N' ? 0 : room.rows - 1;
+    } else {
+      row = Math.max(1, Math.min(room.rows - 2, row));
+      col = dir === 'E' ? room.cols - 1 : 0;
+    }
     room.doorSlots.push({ id: 'slot-'+Math.random().toString(36).slice(2,8), col, row, dir });
     showToast('Door slot placed');
   }
