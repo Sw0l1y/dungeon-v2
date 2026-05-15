@@ -31,6 +31,9 @@
     header .spacer { flex: 1; }
     .ver-badge { font-size: 11px; color: var(--muted); background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 3px 9px; white-space: nowrap; }
     .ver-badge span { color: var(--accent); font-weight: 700; }
+    .save-status { font-size: 10px; color: var(--muted); white-space: nowrap; opacity: 0; transition: opacity 0.3s; }
+    .save-status.saved { color: var(--green); opacity: 1; }
+    .save-status.error { color: var(--danger); opacity: 1; }
     main { display: flex; flex: 1; overflow: hidden; }
 
     /* ── Timeline ────────────────────────────────────────────────────────── */
@@ -237,8 +240,9 @@
     <span class="ver-badge">Editor <span id="editor-ver-text">v1.5</span></span>
     <span class="ver-badge" id="map-version-display">map-v1.0</span>
     <button class="hdr-btn" id="btn-undo" disabled title="Undo (Ctrl+Z)">↩ Undo</button>
-    <button class="hdr-btn" id="btn-load">📂 Load</button>
-    <button class="hdr-btn" id="btn-download">⬇ Download</button>
+    <span id="save-status" class="save-status"></span>
+    <button class="hdr-btn" id="btn-load" title="Load from file (replaces current work)">📂 Load File</button>
+    <button class="hdr-btn" id="btn-download" title="Export a backup .json file">⬇ Export</button>
     <button class="hdr-btn sync no-token" id="btn-sync">⚡ Sync to Live</button>
     <button class="hdr-btn" id="btn-settings" title="Sync settings">⚙</button>
   </header>
@@ -419,6 +423,7 @@ const GH_WORKFLOW_FILE  = 'deploy.yml';
 const TILE_PX     = 24;
 const LS_TOKEN    = 'dungeon_editor_pat';
 const LS_ROOMS    = 'dungeon_editor_room_library';
+const LS_CAMPAIGN = 'dungeon_editor_campaign';
 
 // ── State ─────────────────────────────────────────────────────────────────
 let state      = { mapVersion: 'map-v1.0', campaign: [] };
@@ -481,6 +486,38 @@ function hasToken()       { return !!getToken(); }
 function refreshSyncBtn() {
   btnSync.classList.toggle('no-token', !hasToken());
   btnSync.title = hasToken() ? 'Push maps.json → dungeon-v2 and redeploy' : 'Set a GitHub token in ⚙ Settings first';
+}
+
+// ── Campaign autosave (localStorage) ─────────────────────────────────────
+let _autosaveTimer = null;
+const _saveStatus  = document.getElementById('save-status');
+
+function saveCampaignNow() {
+  try {
+    localStorage.setItem(LS_CAMPAIGN, buildJSON());
+    if (_saveStatus) {
+      const t = new Date();
+      _saveStatus.textContent = `Saved ${t.getHours()}:${String(t.getMinutes()).padStart(2,'0')}:${String(t.getSeconds()).padStart(2,'0')}`;
+      _saveStatus.classList.add('saved');
+      clearTimeout(_saveStatus._fadeTimer);
+      _saveStatus._fadeTimer = setTimeout(() => _saveStatus.classList.remove('saved'), 2000);
+    }
+  } catch(e) {
+    if (_saveStatus) { _saveStatus.textContent = 'Save failed!'; _saveStatus.classList.add('error'); }
+  }
+}
+
+function autosave() {
+  clearTimeout(_autosaveTimer);
+  _autosaveTimer = setTimeout(saveCampaignNow, 600);
+}
+
+function hasSavedCampaign() { return !!localStorage.getItem(LS_CAMPAIGN); }
+
+function loadCampaignFromStorage() {
+  const raw = localStorage.getItem(LS_CAMPAIGN);
+  if (!raw) return false;
+  try { loadJSON(raw); return true; } catch { return false; }
 }
 
 // ── Room library (localStorage) ───────────────────────────────────────────
@@ -1006,6 +1043,7 @@ document.getElementById('add-boss-btn').addEventListener('click',()=>{
 
 // ── Timeline ──────────────────────────────────────────────────────────────
 function buildTimeline() {
+  autosave();
   roomList.innerHTML='';
   state.campaign.forEach((room,i)=>{
     const isShop=room.type==='shop';
@@ -1082,7 +1120,7 @@ function paintAt(e){
 }
 canvas.addEventListener('mousedown',e=>{ e.preventDefault(); if(!spawnMode) pushUndo(); painting=true; paintAt(e); });
 canvas.addEventListener('mousemove',e=>{ if(painting) paintAt(e); });
-canvas.addEventListener('mouseup',()=>{ painting=false; });
+canvas.addEventListener('mouseup',()=>{ painting=false; autosave(); });
 canvas.addEventListener('mouseleave',()=>{ painting=false; });
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 
@@ -1247,6 +1285,12 @@ function showToast(msg, type=''){
   seedLevel1();
   verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion;
   updateTileButtons(); updateUndoBtn(); refreshSyncBtn();
+
+  // Prefer locally-saved draft; only fall back to server fetch if nothing stored
+  if (loadCampaignFromStorage()) {
+    showToast('Restored from last save', 'success');
+    return;
+  }
 
   const isLocal=location.hostname==='localhost'||location.hostname==='127.0.0.1';
   const mapsUrl=isLocal?'../src/data/maps.json':'/games/dungeon-v2/src/data/maps.json';
