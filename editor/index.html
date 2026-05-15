@@ -230,6 +230,29 @@
     #toast.show { opacity: 1; }
     #toast.success { border-color: var(--green); color: var(--green); }
     #toast.error   { border-color: var(--danger); color: var(--danger); }
+
+    /* ── Dungeon group headers in timeline ────────────────────────────────── */
+    .dungeon-group-header { display: flex; align-items: center; gap: 5px; padding: 5px 7px; margin: 4px 0 2px; background: rgba(140,243,255,.04); border: 1px solid rgba(140,243,255,.18); border-radius: 7px; cursor: pointer; user-select: none; transition: border-color .12s; }
+    .dungeon-group-header:hover { border-color: rgba(140,243,255,.35); }
+    .dungeon-group-header.active { border-color: var(--accent); background: rgba(140,243,255,.08); }
+    .dungeon-arrow { font-size: 10px; color: var(--muted); flex-shrink: 0; }
+    .dungeon-name { flex: 1; font-size: 11px; font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dungeon-rename-btn { background: none; border: none; cursor: pointer; color: rgba(140,243,255,.35); font-size: 11px; padding: 0 2px; transition: color .12s; }
+    .dungeon-rename-btn:hover { color: var(--accent); }
+    .dungeon-del-btn { background: none; border: none; cursor: pointer; color: rgba(255,100,100,.35); font-size: 12px; padding: 0 2px; transition: color .12s; }
+    .dungeon-del-btn:hover { color: var(--danger); }
+    /* indent room cards under dungeon header */
+    #room-list .room-card { margin-left: 8px; }
+
+    /* ── Door slot button active state ────────────────────────────────────── */
+    #door-slot-btn.active { border-color: #00dcff !important; background: rgba(0,220,255,.12) !important; color: #00dcff !important; }
+
+    /* ── Dungeon view button active state ─────────────────────────────────── */
+    #btn-dungeon-view.active { border-color: var(--accent); background: rgba(140,243,255,.1); color: var(--accent); }
+
+    /* ── Tag chips ────────────────────────────────────────────────────────── */
+    .tag-chip { padding: 3px 7px; font-size: 10px; font-weight: 700; border-radius: 4px; cursor: pointer; transition: all .1s; background: none; font-family: inherit; }
+    .tag-chip:hover { filter: brightness(1.3); }
   </style>
 </head>
 <body>
@@ -243,6 +266,7 @@
     <span id="save-status" class="save-status"></span>
     <button class="hdr-btn" id="btn-load" title="Load from file (replaces current work)">📂 Load File</button>
     <button class="hdr-btn" id="btn-download" title="Export a backup .json file">⬇ Export</button>
+    <button class="hdr-btn" id="btn-dungeon-view" title="Toggle dungeon connection editor">⊞ Dungeon</button>
     <button class="hdr-btn sync no-token" id="btn-sync">⚡ Sync to Live</button>
     <button class="hdr-btn" id="btn-settings" title="Sync settings">⚙</button>
   </header>
@@ -250,14 +274,23 @@
   <main>
     <!-- Timeline -->
     <aside id="timeline">
-      <div id="timeline-header">Campaign Rooms</div>
+      <div id="timeline-header">Dungeons &amp; Rooms</div>
       <div id="room-list"></div>
-      <div id="timeline-footer">
-        <button class="tl-btn" id="add-room-btn">＋ Room</button>
-        <button class="tl-btn shop" id="add-shop-btn">◈ Shop</button>
-        <button class="tl-btn load" id="load-room-btn">↓ Lib</button>
+      <div id="timeline-footer" style="flex-wrap:wrap;gap:4px;">
+        <button class="tl-btn" id="add-room-btn" style="min-width:60px">＋ Room</button>
+        <button class="tl-btn shop" id="add-shop-btn" style="min-width:60px">◈ Shop</button>
+        <button class="tl-btn load" id="load-room-btn" style="min-width:50px">↓ Lib</button>
+        <button class="tl-btn" id="add-dungeon-btn" style="min-width:80px;border-color:rgba(140,243,255,.4);color:rgba(140,243,255,.8)">⊕ Dungeon</button>
       </div>
     </aside>
+
+    <!-- Dungeon editor (shown when ⊞ Dungeon is active) -->
+    <div id="dungeon-editor" style="display:none;flex:1;background:rgba(0,0,0,.12);position:relative;overflow:hidden;">
+      <canvas id="dungeon-canvas" style="display:block;cursor:default;"></canvas>
+      <div style="position:absolute;top:8px;right:10px;font-size:10px;color:var(--muted);line-height:1.7;pointer-events:none">
+        Click nub → nub to connect &nbsp;·&nbsp; Drag room to move &nbsp;·&nbsp; Right-click nub to remove
+      </div>
+    </div>
 
     <!-- Canvas -->
     <div id="canvas-area">
@@ -295,9 +328,17 @@
         <button class="tile-btn nospawn-btn" data-tile="3" style="margin-bottom:0">
           <span class="tile-swatch" style="background:rgba(255,60,60,0.45);border-color:rgba(255,80,80,.5)"></span>No Spawn<span class="shortcut">4</span>
         </button>
-        <div style="margin-top:4px;">
+        <div style="margin-top:4px;display:flex;flex-direction:column;gap:3px;">
           <button class="spawn-btn" id="spawn-mode-btn">⚑ Set Spawn<span class="shortcut" style="margin-left:auto;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;">5</span></button>
+          <button class="spawn-btn" id="door-slot-btn" style="border-color:rgba(0,220,255,.3);color:rgba(0,220,255,.7)">🚪 Door Slot<span class="shortcut" style="margin-left:auto;font-size:9px;color:var(--muted);background:rgba(255,255,255,.06);border-radius:3px;padding:1px 4px;">6</span></button>
         </div>
+        <p class="hint" style="margin-top:4px">Door slots: click a border wall tile to place/remove a 3-tile passage.</p>
+      </div>
+
+      <div class="tool-section" id="tags-section">
+        <div class="tool-label">Room Tags</div>
+        <div id="tag-chips" style="display:flex;flex-wrap:wrap;gap:3px;"></div>
+        <p class="hint" style="margin-top:4px">Tags control room behaviour in the dungeon loop.</p>
       </div>
 
       <div class="tool-section">
@@ -339,7 +380,7 @@
         <input type="text" id="room-name-input" class="tb-input" placeholder="Room name…" />
       </div>
 
-      <div class="tool-section">
+      <div class="tool-section" id="waves-section">
         <div class="tool-label">Waves</div>
         <div id="wave-list"></div>
         <div class="wave-actions" style="margin-top:5px;">
@@ -410,7 +451,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v1.5';
+const EDITOR_VERSION = 'v2.0';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -421,29 +462,41 @@ const GH_WORKFLOW_FILE  = 'deploy.yml';
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const TILE_PX     = 24;
+const DTHUMB_PX   = 6;   // px/tile in dungeon editor thumbnail
 const LS_TOKEN    = 'dungeon_editor_pat';
 const LS_ROOMS    = 'dungeon_editor_room_library';
 const LS_CAMPAIGN = 'dungeon_editor_campaign';
+const ROOM_TAGS   = ['start','exit','combat','elite','boss','main-boss','shop','secret'];
+const TAG_COLORS  = { start:'#4cffb0', exit:'#ffd166', combat:'#ff9090', elite:'#c07eff',
+                      boss:'#ff6060', 'main-boss':'#ff2020', shop:'#ffd166', secret:'#8cf3ff' };
 
 // ── State ─────────────────────────────────────────────────────────────────
-let state      = { mapVersion: 'map-v1.0', campaign: [] };
-let activeRoom = 0;
-let activeTile = 1;
-let spawnMode  = false;
-let painting   = false;
-let symH       = false;   // left↔right mirror
-let symV       = false;   // top↕bottom mirror
-let fsHandle   = null;
-let dragSrc    = null;
+// state.campaign = [{id, name, rooms:[], connections:[], layout:{positions:{roomId:{x,y}}}}]
+let state         = { mapVersion: 'map-v1.0', campaign: [] };
+let activeDungeon = 0;
+let activeRoom    = 0;
+let activeTile    = 1;
+let spawnMode     = false;
+let doorSlotMode  = false;
+let painting      = false;
+let symH          = false;
+let symV          = false;
+let fsHandle      = null;
+let dragSrc       = null;
+// Dungeon editor
+let dungeonEditorMode = false;
+let dungeonDragState  = null;  // {roomId, startMX, startMY, startRX, startRY}
+let dungeonConnStart  = null;  // {roomId, slotId}
+
+function curDungeon() { return state.campaign[activeDungeon] ?? null; }
+function curRoom()    { return curDungeon()?.rooms?.[activeRoom]  ?? null; }
 
 // ── Undo stack ────────────────────────────────────────────────────────────
 const undoStacks = {};
-function undoStack() {
-  if (!undoStacks[activeRoom]) undoStacks[activeRoom] = [];
-  return undoStacks[activeRoom];
-}
+function undoKey()    { return `${activeDungeon}-${activeRoom}`; }
+function undoStack()  { const k=undoKey(); if(!undoStacks[k]) undoStacks[k]=[]; return undoStacks[k]; }
 function pushUndo() {
-  const room = state.campaign[activeRoom];
+  const room = curRoom();
   if (!room) return;
   undoStack().push(room.tiles.map(r => [...r]));
   if (undoStack().length > 80) undoStack().shift();
@@ -452,7 +505,7 @@ function pushUndo() {
 function undo() {
   const stack = undoStack();
   if (!stack.length) return;
-  state.campaign[activeRoom].tiles = stack.pop();
+  curRoom().tiles = stack.pop();
   render(); updateUndoBtn(); showToast('Undo');
 }
 function updateUndoBtn() {
@@ -525,21 +578,22 @@ function getLibrary()     { try { return JSON.parse(localStorage.getItem(LS_ROOM
 function setLibrary(list) { localStorage.setItem(LS_ROOMS, JSON.stringify(list)); }
 
 function saveRoomToLibrary(idx) {
-  const room = state.campaign[idx];
+  const room = curDungeon()?.rooms[idx];
   if (!room) return;
   const lib  = getLibrary();
   const entry = {
     ...room,
     tiles:       room.tiles.map(r => [...r]),
-    waves:       room.waves.map(w => ({...w})),
+    waves:       (room.waves ?? []).map(w => ({...w})),
     tileColors:  {...room.tileColors},
     playerSpawn: {...room.playerSpawn},
+    doorSlots:   (room.doorSlots ?? []).map(s => ({...s})),
+    tags:        [...(room.tags ?? [])],
     savedAt:     Date.now(),
   };
   const existing = lib.findIndex(r => r.id === room.id);
   if (existing >= 0) lib[existing] = entry; else lib.push(entry);
   setLibrary(lib);
-  // Visual feedback on button
   const btn = document.querySelector(`.room-card[data-room-id="${room.id}"] .save-room-btn`);
   if (btn) {
     btn.textContent = '✓'; btn.classList.add('saved');
@@ -555,18 +609,20 @@ function deleteFromLibrary(id) {
 
 function loadRoomFromLibrary(id) {
   const room = getLibrary().find(r => r.id === id);
-  if (!room) return;
+  if (!room || !curDungeon()) return;
   const fresh = {
     ...room,
-    id:          genId(),   // new ID so it's its own copy
+    id:          genId(),
     tiles:       room.tiles.map(r => [...r]),
-    waves:       room.waves.map(w => ({...w})),
+    waves:       (room.waves ?? []).map(w => ({...w})),
     tileColors:  {...room.tileColors},
     playerSpawn: {...room.playerSpawn},
+    doorSlots:   (room.doorSlots ?? []).map(s => ({...s})),
+    tags:        [...(room.tags ?? [])],
   };
   delete fresh.savedAt;
   const insertAt = activeRoom + 1;
-  state.campaign.splice(insertAt, 0, fresh);
+  curDungeon().rooms.splice(insertAt, 0, fresh);
   closeLibrary();
   selectRoom(insertAt);
   showToast(`Loaded "${fresh.name}"`, 'success');
@@ -756,7 +812,7 @@ function setSyncStatus(msg) {
 
 document.getElementById('btn-sync').addEventListener('click', syncToLive);
 
-// ── Room factory ─────────────────────────────────────────────────────────
+// ── Room / dungeon factories ──────────────────────────────────────────────
 function makeBlankRoom(name) {
   const cols = 30, rows = 17;
   const tiles = [];
@@ -766,10 +822,14 @@ function makeBlankRoom(name) {
       row.push((r === 0 || r === rows-1 || c === 0 || c === cols-1) ? 1 : 0);
     tiles.push(row);
   }
-  return { id: genId(), name, cols, rows, tileSize: 40,
+  return { id: genId(), name, tags: [], cols, rows, tileSize: 40,
     playerSpawn: { col: Math.floor(cols/2), row: Math.floor(rows/2) },
     tileColors: { floor: '#22304a', wall: '#1a2340', destructible: '#1a2340' },
-    waves: defaultWaves(), tiles };
+    waves: defaultWaves(), doorSlots: [], tiles };
+}
+
+function makeBlankDungeon(name) {
+  return { id: genId(), name, rooms: [makeBlankRoom('Room 1')], connections: [], layout: { positions: {} } };
 }
 
 function defaultWaves() {
@@ -804,18 +864,22 @@ function seedLevel1() {
     [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
     [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
   ];
-  state.campaign = [{ id: genId(), name: 'The Entrance', cols: 30, rows: 17, tileSize: 40,
-    playerSpawn: { col: 15, row: 8 },
-    tileColors: { floor: '#22304a', wall: '#1a2340', destructible: '#1a2340' },
-    waves: defaultWaves(), tiles: MAP.map(r => [...r]) }];
-  activeRoom = 0;
+  state.campaign = [{
+    id: genId(), name: 'Dungeon 1',
+    rooms: [{ id: genId(), name: 'The Entrance', tags: ['start'], cols: 30, rows: 17, tileSize: 40,
+      playerSpawn: { col: 15, row: 8 },
+      tileColors: { floor: '#22304a', wall: '#1a2340', destructible: '#1a2340' },
+      waves: defaultWaves(), doorSlots: [], tiles: MAP.map(r => [...r]) }],
+    connections: [], layout: { positions: {} },
+  }];
+  activeDungeon = 0; activeRoom = 0;
 }
 
 // ── Canvas render ─────────────────────────────────────────────────────────
 function resizeCanvas(room) { canvas.width = room.cols * TILE_PX; canvas.height = room.rows * TILE_PX; }
 
 function render() {
-  const room = state.campaign[activeRoom];
+  const room = curRoom();
   if (!room || room.type === 'shop') return;
   const { floor, wall, destructible } = room.tileColors ?? { floor:'#22304a', wall:'#1a2340', destructible:'#1a2340' };
   ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -847,6 +911,27 @@ function render() {
   ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = .5;
   for (let r = 0; r <= room.rows; r++) { ctx.beginPath(); ctx.moveTo(0,r*TILE_PX); ctx.lineTo(room.cols*TILE_PX,r*TILE_PX); ctx.stroke(); }
   for (let c = 0; c <= room.cols; c++) { ctx.beginPath(); ctx.moveTo(c*TILE_PX,0); ctx.lineTo(c*TILE_PX,room.rows*TILE_PX); ctx.stroke(); }
+  // Door slot overlays
+  for (const slot of (room.doorSlots ?? [])) {
+    ctx.save();
+    ctx.fillStyle   = 'rgba(0,220,255,0.25)';
+    ctx.strokeStyle = '#00dcff';
+    ctx.lineWidth   = 1.5;
+    const tiles = doorSlotTiles(room, slot);
+    for (const [tr, tc] of tiles) {
+      const tx = tc * TILE_PX, ty = tr * TILE_PX;
+      ctx.fillRect(tx, ty, TILE_PX, TILE_PX);
+      ctx.strokeRect(tx+.5, ty+.5, TILE_PX-1, TILE_PX-1);
+    }
+    // Direction arrow
+    const cx2 = (slot.col + .5) * TILE_PX, cy2 = (slot.row + .5) * TILE_PX;
+    ctx.fillStyle = '#00dcff'; ctx.font = `bold ${TILE_PX*.5}px monospace`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const arrowMap = { N:'▲', S:'▼', E:'▶', W:'◀' };
+    ctx.fillText(arrowMap[slot.dir] ?? '•', cx2, cy2 + 1);
+    ctx.restore();
+  }
+
   const { col, row } = room.playerSpawn;
   const sx=(col+.5)*TILE_PX, sy=(row+.5)*TILE_PX;
   ctx.save(); ctx.globalAlpha=.9; ctx.fillStyle='#ffd24c';
@@ -858,7 +943,7 @@ function render() {
 
 // ── Symmetry guides ───────────────────────────────────────────────────────
 function drawGuides() {
-  const room = state.campaign[activeRoom];
+  const room = curRoom();
   if (!room) return;
   const W    = room.cols * TILE_PX;
   const H    = room.rows * TILE_PX;
@@ -922,7 +1007,7 @@ function hexToLuminance(hex) {
 }
 function colorsDiffer(a,b) { return Math.abs(hexToLuminance(a)-hexToLuminance(b))>0.04; }
 function syncColorPickers() {
-  const room=state.campaign[activeRoom]; if(!room) return;
+  const room=curRoom(); if(!room) return;
   const tc=room.tileColors??{};
   colorFloor.value=tc.floor??'#22304a'; colorWall.value=tc.wall??'#1a2340'; colorDestr.value=tc.destructible??'#1a2340';
   updateSwatches(); checkColorDistinction();
@@ -941,7 +1026,7 @@ function checkColorDistinction() {
   colorWarn.classList.toggle('visible', !colorsDiffer(f,w)||!colorsDiffer(f,d)||!colorsDiffer(w,d));
 }
 function applyColors() {
-  const room=state.campaign[activeRoom]; if(!room) return;
+  const room=curRoom(); if(!room) return;
   room.tileColors={floor:colorFloor.value,wall:colorWall.value,destructible:colorDestr.value};
   updateSwatches(); checkColorDistinction(); render();
 }
@@ -961,7 +1046,7 @@ function waveSummary(w) {
 }
 let openWave = -1;
 function buildWaveList() {
-  const room=state.campaign[activeRoom]; if(!room) return;
+  const room=curRoom(); if(!room) return;
   const waves=room.waves??[]; waveList.innerHTML='';
   waves.forEach((w,i)=>{
     const row=document.createElement('div');
@@ -1033,65 +1118,173 @@ function buildWaveList() {
   });
 }
 document.getElementById('add-wave-btn').addEventListener('click',()=>{
-  const room=state.campaign[activeRoom]; if(!room) return;
+  const room=curRoom(); if(!room) return;
   room.waves.push({enemy:3,sprinter:0,ranger:0,pairs:0}); openWave=room.waves.length-1; buildWaveList();
 });
 document.getElementById('add-boss-btn').addEventListener('click',()=>{
-  const room=state.campaign[activeRoom]; if(!room) return;
+  const room=curRoom(); if(!room) return;
   room.waves.push({boss:true,bossHp:800,bossP2Pct:60,bossP3Pct:35}); openWave=room.waves.length-1; buildWaveList();
 });
 
 // ── Timeline ──────────────────────────────────────────────────────────────
+function tagBadges(room) {
+  const tags = room.tags ?? [];
+  return tags.map(t => {
+    const c = TAG_COLORS[t] ?? '#8cf3ff';
+    return `<span style="font-size:8px;padding:1px 4px;border-radius:3px;border:1px solid ${c};color:${c};flex-shrink:0">${t}</span>`;
+  }).join('');
+}
+
 function buildTimeline() {
   autosave();
-  roomList.innerHTML='';
-  state.campaign.forEach((room,i)=>{
-    const isShop=room.type==='shop';
-    const card=document.createElement('div');
-    card.className='room-card'+(isShop?' shop-room':'')+(i===activeRoom?' active':'');
-    card.dataset.roomId=room.id;
-    card.draggable=true;
-    if(isShop){
-      card.innerHTML=`<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-badge">◈</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="del-btn" title="Remove from campaign">✕</button>`;
-    } else {
-      card.innerHTML=`<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="save-room-btn" title="Save to library">💾</button><button class="del-btn" title="Remove from campaign">✕</button>`;
-      card.querySelector('.save-room-btn').addEventListener('click',e=>{ e.stopPropagation(); saveRoomToLibrary(i); });
-    }
-    card.addEventListener('click',e=>{ if(!e.target.classList.contains('del-btn')&&!e.target.classList.contains('save-room-btn')) selectRoom(i); });
-    card.querySelector('.del-btn').addEventListener('click',e=>{ e.stopPropagation(); deleteRoom(i); });
-    card.addEventListener('dragstart',e=>{ dragSrc=i; e.dataTransfer.effectAllowed='move'; setTimeout(()=>card.style.opacity='.4',0); });
-    card.addEventListener('dragend',()=>{ card.style.opacity=''; document.querySelectorAll('.room-card').forEach(c=>c.classList.remove('drag-over')); });
-    card.addEventListener('dragover',e=>{ e.preventDefault(); e.dataTransfer.dropEffect='move'; document.querySelectorAll('.room-card').forEach(c=>c.classList.remove('drag-over')); card.classList.add('drag-over'); });
-    card.addEventListener('drop',e=>{ e.preventDefault(); if(dragSrc!==null&&dragSrc!==i){ moveRoom(dragSrc,i); dragSrc=null; } });
-    roomList.appendChild(card);
+  roomList.innerHTML = '';
+  state.campaign.forEach((dungeon, di) => {
+    // Dungeon group header
+    const header = document.createElement('div');
+    header.className = 'dungeon-group-header' + (di === activeDungeon ? ' active' : '');
+    header.innerHTML = `
+      <span class="dungeon-arrow">▾</span>
+      <span class="dungeon-name" title="${escHtml(dungeon.name)}">${escHtml(dungeon.name)}</span>
+      <button class="dungeon-rename-btn" title="Rename dungeon">✏</button>
+      <button class="dungeon-del-btn" title="Delete dungeon">✕</button>`;
+    header.querySelector('.dungeon-rename-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      const n = prompt('Dungeon name:', dungeon.name);
+      if (n !== null && n.trim()) { dungeon.name = n.trim(); buildTimeline(); }
+    });
+    header.querySelector('.dungeon-del-btn').addEventListener('click', e => {
+      e.stopPropagation(); deleteDungeon(di);
+    });
+    header.addEventListener('click', () => { if (di !== activeDungeon) { activeDungeon = di; activeRoom = 0; selectRoom(0); } });
+    roomList.appendChild(header);
+
+    if (di !== activeDungeon) return; // collapsed for inactive dungeons
+
+    (dungeon.rooms ?? []).forEach((room, i) => {
+      const isShop = room.type === 'shop';
+      const card = document.createElement('div');
+      card.className = 'room-card' + (isShop ? ' shop-room' : '') + (i === activeRoom ? ' active' : '');
+      card.dataset.roomId = room.id;
+      card.draggable = true;
+      const badges = tagBadges(room);
+      if (isShop) {
+        card.innerHTML = `<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><span class="room-badge">◈</span><span class="room-name" title="${escHtml(room.name)}">${escHtml(room.name)}</span><button class="del-btn">✕</button>`;
+      } else {
+        card.innerHTML = `<span class="drag-handle">⠿</span><span class="room-index">${i+1}</span><div style="flex:1;min-width:0"><span class="room-name">${escHtml(room.name)}</span><div style="display:flex;gap:2px;flex-wrap:wrap;margin-top:2px">${badges}</div></div><button class="save-room-btn" title="Save to library">💾</button><button class="del-btn">✕</button>`;
+        card.querySelector('.save-room-btn').addEventListener('click', e => { e.stopPropagation(); saveRoomToLibrary(i); });
+      }
+      card.addEventListener('click', e => { if(!e.target.classList.contains('del-btn') && !e.target.classList.contains('save-room-btn')) selectRoom(i); });
+      card.querySelector('.del-btn').addEventListener('click', e => { e.stopPropagation(); deleteRoom(i); });
+      card.addEventListener('dragstart', e => { dragSrc = i; e.dataTransfer.effectAllowed = 'move'; setTimeout(() => card.style.opacity = '.4', 0); });
+      card.addEventListener('dragend', () => { card.style.opacity = ''; document.querySelectorAll('.room-card').forEach(c => c.classList.remove('drag-over')); });
+      card.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; document.querySelectorAll('.room-card').forEach(c => c.classList.remove('drag-over')); card.classList.add('drag-over'); });
+      card.addEventListener('drop', e => { e.preventDefault(); if (dragSrc !== null && dragSrc !== i) { moveRoom(dragSrc, i); dragSrc = null; } });
+      roomList.appendChild(card);
+    });
   });
 }
-function escHtml(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
-function selectRoom(i){
-  activeRoom=i; openWave=-1;
-  const room=state.campaign[i];
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function selectRoom(i) {
+  activeRoom = i; openWave = -1;
+  const room = curDungeon()?.rooms?.[i];
+  if (!room) return;
   buildTimeline(); updateUndoBtn();
-  const isShop=room.type==='shop';
-  // Toggle between canvas editing (normal rooms) and shop placeholder
+  if (dungeonEditorMode) { renderDungeonEditor(); return; }
+  const isShop = room.type === 'shop';
   document.getElementById('canvas-wrap').style.display      = isShop ? 'none' : '';
   document.getElementById('shop-placeholder').style.display = isShop ? 'flex' : 'none';
-  document.getElementById('toolbox').style.display          = isShop ? 'none' : '';
-  if(isShop){
-    document.getElementById('shop-name-input').value=room.name||'The Armory';
+  document.getElementById('toolbox').style.display          = isShop ? '' : '';
+  document.getElementById('tags-section').style.display     = isShop ? 'none' : '';
+  document.getElementById('waves-section').style.display    = isShop ? 'none' : '';
+  if (isShop) {
+    document.getElementById('shop-name-input').value = room.name || 'The Armory';
   } else {
-    nameInput.value=room.name; colsInput.value=room.cols; rowsInput.value=room.rows;
-    resizeCanvas(room); syncColorPickers(); buildWaveList(); render();
+    nameInput.value = room.name; colsInput.value = room.cols; rowsInput.value = room.rows;
+    resizeCanvas(room); syncColorPickers(); buildTagChips(); buildWaveList(); render();
   }
 }
-function deleteRoom(i){
-  if(state.campaign.length<=1){ showToast('Cannot delete last room'); return; }
-  delete undoStacks[i]; state.campaign.splice(i,1);
-  if(activeRoom>=state.campaign.length) activeRoom=state.campaign.length-1;
+
+function deleteRoom(i) {
+  const rooms = curDungeon()?.rooms;
+  if (!rooms || rooms.length <= 1) { showToast('Cannot delete last room'); return; }
+  delete undoStacks[`${activeDungeon}-${i}`];
+  rooms.splice(i, 1);
+  if (activeRoom >= rooms.length) activeRoom = rooms.length - 1;
   selectRoom(activeRoom);
 }
-function moveRoom(from,to){
-  const [room]=state.campaign.splice(from,1); state.campaign.splice(to,0,room);
-  activeRoom=to; selectRoom(activeRoom);
+
+function moveRoom(from, to) {
+  const rooms = curDungeon()?.rooms;
+  if (!rooms) return;
+  const [room] = rooms.splice(from, 1); rooms.splice(to, 0, room);
+  activeRoom = to; selectRoom(activeRoom);
+}
+
+function addDungeon() {
+  const name = `Dungeon ${state.campaign.length + 1}`;
+  state.campaign.push(makeBlankDungeon(name));
+  activeDungeon = state.campaign.length - 1;
+  activeRoom = 0;
+  selectRoom(0);
+  showToast(`Dungeon "${name}" added`, 'success');
+}
+
+function deleteDungeon(i) {
+  if (state.campaign.length <= 1) { showToast('Cannot delete last dungeon'); return; }
+  if (!confirm(`Delete dungeon "${state.campaign[i].name}" and all its rooms?`)) return;
+  state.campaign.splice(i, 1);
+  if (activeDungeon >= state.campaign.length) activeDungeon = state.campaign.length - 1;
+  activeRoom = 0;
+  selectRoom(0);
+}
+
+// ── Door slot logic ───────────────────────────────────────────────────────
+function doorSlotTiles(room, slot) {
+  const { col, row, dir } = slot;
+  if (dir === 'N' || dir === 'S') return [[row, col-1],[row, col],[row, col+1]];
+  return [[row-1, col],[row, col],[row+1, col]];
+}
+
+function slotDirFromPos(room, col, row) {
+  if (row === 0)            return 'N';
+  if (row === room.rows-1)  return 'S';
+  if (col === room.cols-1)  return 'E';
+  if (col === 0)            return 'W';
+  return null;
+}
+
+function placeDoorSlot(col, row) {
+  const room = curRoom(); if (!room) return;
+  const dir = slotDirFromPos(room, col, row);
+  if (!dir) { showToast('Door slots must be on a border wall'); return; }
+  // Clamp center so 3-tile passage fits
+  if (!room.doorSlots) room.doorSlots = [];
+  if (dir === 'N' || dir === 'S') {
+    col = Math.max(1, Math.min(room.cols - 2, col));
+    row = dir === 'N' ? 0 : room.rows - 1;
+  } else {
+    row = Math.max(1, Math.min(room.rows - 2, row));
+    col = dir === 'E' ? room.cols - 1 : 0;
+  }
+  const existing = room.doorSlots.findIndex(s => s.col === col && s.row === row && s.dir === dir);
+  if (existing >= 0) {
+    // Remove the slot and also remove any connections referencing it
+    const removedId = room.doorSlots[existing].id;
+    room.doorSlots.splice(existing, 1);
+    if (curDungeon()) curDungeon().connections = (curDungeon().connections ?? []).filter(c =>
+      !(c.roomA === room.id && c.slotA === removedId) &&
+      !(c.roomB === room.id && c.slotB === removedId)
+    );
+    showToast('Door slot removed');
+  } else {
+    room.doorSlots.push({ id: 'slot-'+Math.random().toString(36).slice(2,8), col, row, dir });
+    showToast('Door slot placed');
+  }
+  render();
+  if (dungeonEditorMode) renderDungeonEditor();
+  autosave();
 }
 
 // ── Tile painting ─────────────────────────────────────────────────────────
@@ -1104,13 +1297,14 @@ function setTile(room, c, r, tile) {
   room.tiles[r][c] = tile;
 }
 function paintAt(e){
-  const room=state.campaign[activeRoom];
+  const room=curRoom();
   const {col,row}=tileAt(e);
-  if(col<0||col>=room.cols||row<0||row>=room.rows) return;
+  if(!room||col<0||col>=room.cols||row<0||row>=room.rows) return;
+  if(doorSlotMode){ placeDoorSlot(col,row); return; }
   if(spawnMode){ if(room.tiles[row][col]===0){ room.playerSpawn={col,row}; setSpawnMode(false); render(); } return; }
   const tile = e.button===2 ? 0 : activeTile;
-  const mc   = room.cols - 1 - col;  // mirrored col
-  const mr   = room.rows - 1 - row;  // mirrored row
+  const mc   = room.cols - 1 - col;
+  const mr   = room.rows - 1 - row;
   let changed = false;
   if(room.tiles[row][col] !== tile)               { setTile(room,col,row,tile); changed=true; }
   if(symH && mc!==col)                            { setTile(room,mc,row,tile);  changed=true; }
@@ -1118,16 +1312,26 @@ function paintAt(e){
   if(symH && symV && mc!==col && mr!==row)        { setTile(room,mc,mr,tile);   changed=true; }
   if(changed) render();
 }
-canvas.addEventListener('mousedown',e=>{ e.preventDefault(); if(!spawnMode) pushUndo(); painting=true; paintAt(e); });
-canvas.addEventListener('mousemove',e=>{ if(painting) paintAt(e); });
+canvas.addEventListener('mousedown',e=>{ e.preventDefault(); if(!spawnMode&&!doorSlotMode) pushUndo(); painting=true; paintAt(e); });
+canvas.addEventListener('mousemove',e=>{ if(painting&&!doorSlotMode) paintAt(e); });
 canvas.addEventListener('mouseup',()=>{ painting=false; autosave(); });
 canvas.addEventListener('mouseleave',()=>{ painting=false; });
 canvas.addEventListener('contextmenu',e=>e.preventDefault());
 
 // ── Spawn mode ────────────────────────────────────────────────────────────
 const spawnBtn=document.getElementById('spawn-mode-btn');
-function setSpawnMode(on){ spawnMode=on; spawnBtn.classList.toggle('active',on); document.getElementById('canvas-wrap').classList.toggle('spawn-mode',on); }
+function setSpawnMode(on){ spawnMode=on; if(on) setDoorSlotMode(false); spawnBtn.classList.toggle('active',on); document.getElementById('canvas-wrap').classList.toggle('spawn-mode',on); }
 spawnBtn.addEventListener('click',()=>setSpawnMode(!spawnMode));
+
+// ── Door slot mode ────────────────────────────────────────────────────────
+function setDoorSlotMode(on) {
+  doorSlotMode = on;
+  if (on) setSpawnMode(false);
+  const btn = document.getElementById('door-slot-btn');
+  if (btn) btn.classList.toggle('active', on);
+  document.getElementById('canvas-wrap').classList.toggle('spawn-mode', on);
+}
+document.getElementById('door-slot-btn')?.addEventListener('click', () => setDoorSlotMode(!doorSlotMode));
 
 // ── Symmetry toggles ─────────────────────────────────────────────────────
 function setSymH(on){ symH=on; document.getElementById('sym-h-btn').classList.toggle('active',on); render(); }
@@ -1137,7 +1341,7 @@ document.getElementById('sym-v-btn').addEventListener('click',()=>setSymV(!symV)
 
 // ── Tile type buttons ─────────────────────────────────────────────────────
 document.querySelectorAll('.tile-btn').forEach(btn=>{
-  btn.addEventListener('click',()=>{ activeTile=parseInt(btn.dataset.tile); setSpawnMode(false); updateTileButtons(); });
+  btn.addEventListener('click',()=>{ activeTile=parseInt(btn.dataset.tile); setSpawnMode(false); setDoorSlotMode(false); updateTileButtons(); });
 });
 function updateTileButtons(){ document.querySelectorAll('.tile-btn').forEach(btn=>btn.classList.toggle('active',parseInt(btn.dataset.tile)===activeTile)); }
 
@@ -1147,8 +1351,9 @@ window.addEventListener('keydown',e=>{
   if(e.key==='1'){ activeTile=0; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='2'){ activeTile=1; setSpawnMode(false); updateTileButtons(); }
   if(e.key==='3'){ activeTile=2; setSpawnMode(false); updateTileButtons(); }
-  if(e.key==='4'){ activeTile=3; setSpawnMode(false); updateTileButtons(); }
-  if(e.key==='5'){ setSpawnMode(!spawnMode); }
+  if(e.key==='4'){ activeTile=3; setSpawnMode(false); setDoorSlotMode(false); updateTileButtons(); }
+  if(e.key==='5'){ setSpawnMode(!spawnMode); setDoorSlotMode(false); }
+  if(e.key==='6'){ setDoorSlotMode(!doorSlotMode); setSpawnMode(false); }
   if(e.key==='h'||e.key==='H'){ setSymH(!symH); }
   if(e.key==='v'||e.key==='V'){ setSymV(!symV); }
   if((e.ctrlKey||e.metaKey)&&e.key==='s'){ e.preventDefault(); syncToLive(); }
@@ -1157,13 +1362,13 @@ window.addEventListener('keydown',e=>{
 document.getElementById('btn-undo').addEventListener('click',undo);
 
 // ── Room name ─────────────────────────────────────────────────────────────
-nameInput.addEventListener('input',()=>{ const room=state.campaign[activeRoom]; if(room&&room.type!=='shop'){ room.name=nameInput.value||'Unnamed'; buildTimeline(); } });
+nameInput.addEventListener('input',()=>{ const room=curRoom(); if(room&&room.type!=='shop'){ room.name=nameInput.value||'Unnamed'; buildTimeline(); } });
 verInput.addEventListener('input',()=>{ state.mapVersion=verInput.value; verDisplay.textContent=state.mapVersion; });
 
 // ── Resize ────────────────────────────────────────────────────────────────
 document.getElementById('apply-resize').addEventListener('click',()=>{
-  const room=state.campaign[activeRoom];
-  if(room?.type==='shop') return;
+  const room=curRoom();
+  if(!room||room.type==='shop') return;
   const newCols=Math.max(10,Math.min(60,parseInt(colsInput.value)||room.cols));
   const newRows=Math.max(8,Math.min(40,parseInt(rowsInput.value)||room.rows));
   pushUndo();
@@ -1185,35 +1390,78 @@ document.getElementById('apply-resize').addEventListener('click',()=>{
 
 // ── Add room ──────────────────────────────────────────────────────────────
 document.getElementById('add-room-btn').addEventListener('click',()=>{
-  state.campaign.push(makeBlankRoom(`Room ${state.campaign.length+1}`));
-  selectRoom(state.campaign.length-1); showToast('Room added');
+  if(!curDungeon()) return;
+  curDungeon().rooms.push(makeBlankRoom(`Room ${curDungeon().rooms.length+1}`));
+  selectRoom(curDungeon().rooms.length-1); showToast('Room added');
 });
 
 // ── Add shop room ─────────────────────────────────────────────────────────
 document.getElementById('add-shop-btn').addEventListener('click',()=>{
-  state.campaign.push({ id:genId(), name:'The Armory', type:'shop' });
-  selectRoom(state.campaign.length-1); showToast('Shop room added');
+  if(!curDungeon()) return;
+  curDungeon().rooms.push({ id:genId(), name:'The Armory', type:'shop', tags:[], doorSlots:[], waves:[], tiles:[], cols:1, rows:1 });
+  selectRoom(curDungeon().rooms.length-1); showToast('Shop room added');
 });
+
+// ── Add dungeon button ────────────────────────────────────────────────────
+document.getElementById('add-dungeon-btn')?.addEventListener('click', addDungeon);
 
 // ── Shop name input sync ─────────────────────────────────────────────────
 document.getElementById('shop-name-input').addEventListener('input', e=>{
-  const room=state.campaign[activeRoom];
+  const room=curRoom();
   if(room?.type==='shop'){ room.name=e.target.value||'The Armory'; buildTimeline(); }
 });
 
+// ── Tags ──────────────────────────────────────────────────────────────────
+function buildTagChips() {
+  const room = curRoom();
+  const el   = document.getElementById('tag-chips');
+  if (!el || !room) return;
+  el.innerHTML = '';
+  for (const tag of ROOM_TAGS) {
+    const active = (room.tags ?? []).includes(tag);
+    const c = TAG_COLORS[tag] ?? '#8cf3ff';
+    const chip = document.createElement('button');
+    chip.className = 'tag-chip' + (active ? ' on' : '');
+    chip.textContent = tag;
+    chip.style.cssText = active
+      ? `border:1px solid ${c};color:${c};background:${c}18`
+      : `border:1px solid ${c}44;color:${c}88`;
+    chip.addEventListener('click', () => {
+      if (!room.tags) room.tags = [];
+      const idx = room.tags.indexOf(tag);
+      if (idx >= 0) room.tags.splice(idx, 1); else room.tags.push(tag);
+      buildTagChips(); buildTimeline(); autosave();
+    });
+    el.appendChild(chip);
+  }
+}
+
 // ── Serialise ─────────────────────────────────────────────────────────────
-function buildJSON(){
+function normaliseRoom(r) {
+  if (r.type === 'shop') return { id: r.id||genId(), name: r.name||'The Armory', type: 'shop', tags: r.tags??[] };
+  return {
+    id: r.id||genId(), name: r.name||'Room',
+    tags: r.tags ?? [],
+    cols: r.cols||r.tiles[0].length, rows: r.rows||r.tiles.length, tileSize: r.tileSize||40,
+    playerSpawn: r.playerSpawn ? {...r.playerSpawn} : {col:Math.floor((r.cols||30)/2),row:Math.floor((r.rows||17)/2)},
+    tileColors:  r.tileColors  ? {...r.tileColors}  : {floor:'#22304a',wall:'#1a2340',destructible:'#1a2340'},
+    waves:  (r.waves ?? defaultWaves()).map(normaliseBossWave),
+    doorSlots: (r.doorSlots ?? []).map(s => ({...s})),
+    tiles: r.tiles.map(row => [...row]),
+  };
+}
+
+function buildJSON() {
   return JSON.stringify({
     mapVersion: state.mapVersion,
-    campaign: state.campaign.map(r=>{
-      if(r.type==='shop') return { id:r.id, name:r.name, type:'shop' };
-      return {
-        id:r.id, name:r.name, cols:r.cols, rows:r.rows, tileSize:r.tileSize??40,
-        playerSpawn:{...r.playerSpawn}, tileColors:{...r.tileColors},
-        waves:r.waves.map(w=>({...w})), tiles:r.tiles.map(row=>[...row]),
-      };
-    }),
-  },null,2);
+    campaign: state.campaign.map(dung => ({
+      id:   dung.id,
+      name: dung.name,
+      rooms: (dung.rooms ?? []).map(r => normaliseRoom(r)),
+      connections: (dung.connections ?? []).map(c => ({...c})),
+      layout: { positions: {...(dung.layout?.positions ?? {})} },
+    })),
+  }, null, 2);
 }
 
 // ── Parse ─────────────────────────────────────────────────────────────────
@@ -1221,24 +1469,37 @@ function normaliseBossWave(w){
   if(!w.boss) return {...w};
   return { boss:true, bossHp:w.bossHp??800, bossP2Pct:w.bossP2Pct??60, bossP3Pct:w.bossP3Pct??35 };
 }
+
 function loadJSON(text){
   let data; try{ data=JSON.parse(text); } catch{ showToast('Invalid JSON','error'); return; }
   if(!data.campaign?.length){ showToast('No campaign data found','error'); return; }
-  state.mapVersion=data.mapVersion??'map-v1.0';
-  state.campaign=data.campaign.map(r=>{
-    if(r.type==='shop') return { id:r.id||genId(), name:r.name||'The Armory', type:'shop' };
-    return {
-      id:r.id||genId(), name:r.name||'Room',
-      cols:r.cols||r.tiles[0].length, rows:r.rows||r.tiles.length, tileSize:r.tileSize||40,
-      playerSpawn:r.playerSpawn?{...r.playerSpawn}:{col:Math.floor((r.cols||30)/2),row:Math.floor((r.rows||17)/2)},
-      tileColors:r.tileColors?{...r.tileColors}:{floor:'#22304a',wall:'#1a2340',destructible:'#1a2340'},
-      waves:r.waves?r.waves.map(normaliseBossWave):defaultWaves(),
-      tiles:r.tiles.map(row=>[...row]),
-    };
-  });
-  Object.keys(undoStacks).forEach(k=>delete undoStacks[k]);
-  verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion;
-  activeRoom=0; openWave=-1; selectRoom(0);
+  state.mapVersion = data.mapVersion ?? 'map-v1.0';
+
+  const isNewFormat = data.campaign[0]?.rooms != null;
+  if (isNewFormat) {
+    // New hierarchical format: campaign = [{id, name, rooms, connections, layout}]
+    state.campaign = data.campaign.map(dung => ({
+      id:   dung.id   || genId(),
+      name: dung.name || 'Dungeon',
+      rooms: (dung.rooms ?? []).map(normaliseRoom),
+      connections: (dung.connections ?? []).map(c => ({...c})),
+      layout: { positions: {...(dung.layout?.positions ?? {})} },
+    }));
+  } else {
+    // Old flat format: campaign = [room, room, …] → wrap in one dungeon
+    state.campaign = [{
+      id:   genId(),
+      name: 'Dungeon 1',
+      rooms: data.campaign.map(normaliseRoom),
+      connections: [],
+      layout: { positions: {} },
+    }];
+    showToast('Old format detected — migrated to dungeon structure', 'success');
+  }
+
+  Object.keys(undoStacks).forEach(k => delete undoStacks[k]);
+  verInput.value = state.mapVersion; verDisplay.textContent = state.mapVersion;
+  activeDungeon = 0; activeRoom = 0; openWave = -1; selectRoom(0);
 }
 
 // ── Version bump ──────────────────────────────────────────────────────────
@@ -1279,6 +1540,241 @@ function showToast(msg, type=''){
   toast.className=type?`show ${type}`:'show';
   clearTimeout(toastTimer); toastTimer=setTimeout(()=>toast.className='',2400);
 }
+
+// ── Dungeon editor ────────────────────────────────────────────────────────
+const dungeonCanvas = document.getElementById('dungeon-canvas');
+const dctx = dungeonCanvas?.getContext('2d');
+
+function toggleDungeonEditor() {
+  dungeonEditorMode = !dungeonEditorMode;
+  document.getElementById('btn-dungeon-view').classList.toggle('active', dungeonEditorMode);
+  document.getElementById('dungeon-editor').style.display = dungeonEditorMode ? 'flex' : 'none';
+  const roomEl = document.getElementById('canvas-area');
+  if (roomEl) roomEl.style.display = dungeonEditorMode ? 'none' : '';
+  document.getElementById('toolbox').style.display = dungeonEditorMode ? 'none' : '';
+  if (dungeonEditorMode) {
+    resizeDungeonCanvas();
+    renderDungeonEditor();
+  }
+}
+document.getElementById('btn-dungeon-view')?.addEventListener('click', toggleDungeonEditor);
+
+function resizeDungeonCanvas() {
+  const el = document.getElementById('dungeon-editor');
+  if (!el || !dungeonCanvas) return;
+  dungeonCanvas.width  = el.clientWidth  || 900;
+  dungeonCanvas.height = el.clientHeight || 600;
+}
+
+function slotNubPos(pos, slot, room) {
+  const S = DTHUMB_PX;
+  if (slot.dir === 'N') return { x: pos.x + (slot.col + 0.5) * S, y: pos.y };
+  if (slot.dir === 'S') return { x: pos.x + (slot.col + 0.5) * S, y: pos.y + room.rows * S };
+  if (slot.dir === 'E') return { x: pos.x + room.cols * S,        y: pos.y + (slot.row + 0.5) * S };
+  return                       { x: pos.x,                         y: pos.y + (slot.row + 0.5) * S };
+}
+
+function renderDungeonEditor() {
+  if (!dctx || !dungeonCanvas) return;
+  const dg = curDungeon();
+  dctx.clearRect(0, 0, dungeonCanvas.width, dungeonCanvas.height);
+  if (!dg) return;
+
+  // Ensure every room has a position
+  for (let i = 0; i < dg.rooms.length; i++) {
+    const r = dg.rooms[i];
+    if (!dg.layout.positions[r.id]) {
+      dg.layout.positions[r.id] = { x: 30 + (i % 4) * 230, y: 30 + Math.floor(i / 4) * 160 };
+    }
+  }
+
+  // Draw connections first (below rooms)
+  for (const conn of (dg.connections ?? [])) {
+    const rA = dg.rooms.find(r => r.id === conn.roomA);
+    const rB = dg.rooms.find(r => r.id === conn.roomB);
+    if (!rA || !rB) continue;
+    const sA = rA.doorSlots?.find(s => s.id === conn.slotA);
+    const sB = rB.doorSlots?.find(s => s.id === conn.slotB);
+    if (!sA || !sB) continue;
+    const pA = dg.layout.positions[rA.id];
+    const pB = dg.layout.positions[rB.id];
+    const nA = slotNubPos(pA, sA, rA);
+    const nB = slotNubPos(pB, sB, rB);
+    dctx.strokeStyle = 'rgba(140,243,255,0.7)';
+    dctx.lineWidth = 1.5;
+    dctx.setLineDash([4, 3]);
+    dctx.beginPath(); dctx.moveTo(nA.x, nA.y); dctx.lineTo(nB.x, nB.y); dctx.stroke();
+    dctx.setLineDash([]);
+  }
+
+  // Draw rooms
+  for (const room of dg.rooms) {
+    const pos  = dg.layout.positions[room.id];
+    const W    = room.cols * DTHUMB_PX;
+    const H    = room.rows * DTHUMB_PX;
+    const tc   = room.tileColors ?? { floor: '#22304a', wall: '#1a2340' };
+    // Tiles
+    if (room.type !== 'shop') {
+      for (let r = 0; r < room.rows; r++) {
+        for (let c = 0; c < room.cols; c++) {
+          const t = room.tiles[r]?.[c] ?? 0;
+          dctx.fillStyle = (t === 0 || t === 3) ? tc.floor : tc.wall;
+          dctx.fillRect(pos.x + c * DTHUMB_PX, pos.y + r * DTHUMB_PX, DTHUMB_PX, DTHUMB_PX);
+        }
+      }
+    } else {
+      dctx.fillStyle = '#ffd16622';
+      dctx.fillRect(pos.x, pos.y, W, H);
+    }
+    // Border colour by tag
+    const tags = room.tags ?? [];
+    const borderCol = tags.includes('main-boss') ? '#ff2020' : tags.includes('boss') ? '#ff7070' :
+      tags.includes('start') ? '#4cffb0' : tags.includes('exit') ? '#ffd166' :
+      tags.includes('shop') ? '#ffd166' : 'rgba(140,243,255,0.5)';
+    dctx.strokeStyle = borderCol; dctx.lineWidth = 1;
+    dctx.strokeRect(pos.x, pos.y, W, H);
+    // Name label
+    dctx.fillStyle = 'rgba(255,255,255,0.85)';
+    dctx.font = '8px sans-serif'; dctx.textAlign = 'center';
+    dctx.fillText(room.name, pos.x + W/2, pos.y - 3);
+    // Tag chips on thumbnail
+    if (tags.length) {
+      const tagStr = tags.join(' · ');
+      dctx.fillStyle = borderCol; dctx.font = '7px sans-serif';
+      dctx.fillText(tagStr, pos.x + W/2, pos.y + H + 8);
+    }
+    // Active room highlight
+    if (room === curRoom()) {
+      dctx.strokeStyle = '#fff'; dctx.lineWidth = 1.5;
+      dctx.strokeRect(pos.x - 1, pos.y - 1, W + 2, H + 2);
+    }
+    // Door nubs
+    for (const slot of (room.doorSlots ?? [])) {
+      const { x: nx, y: ny } = slotNubPos(pos, slot, room);
+      const isConnected = (dg.connections ?? []).some(c =>
+        (c.roomA === room.id && c.slotA === slot.id) ||
+        (c.roomB === room.id && c.slotB === slot.id)
+      );
+      const isPending = dungeonConnStart?.roomId === room.id && dungeonConnStart?.slotId === slot.id;
+      dctx.fillStyle   = isPending ? '#ffd24c' : isConnected ? '#4cffb0' : '#8cf3ff';
+      dctx.strokeStyle = '#07111c'; dctx.lineWidth = 0.5;
+      dctx.beginPath(); dctx.arc(nx, ny, 4, 0, Math.PI*2); dctx.fill(); dctx.stroke();
+    }
+  }
+
+  // Dead-end warnings (slots with no connection)
+  let deadEnds = 0;
+  for (const room of dg.rooms) {
+    for (const slot of (room.doorSlots ?? [])) {
+      const connected = (dg.connections ?? []).some(c =>
+        (c.roomA === room.id && c.slotA === slot.id) ||
+        (c.roomB === room.id && c.slotB === slot.id)
+      );
+      if (!connected) deadEnds++;
+    }
+  }
+  if (deadEnds) {
+    dctx.fillStyle = '#ffb347'; dctx.font = '10px sans-serif'; dctx.textAlign = 'left';
+    dctx.fillText(`⚠ ${deadEnds} unconnected slot${deadEnds>1?'s':''}`, 8, dungeonCanvas.height - 8);
+  }
+}
+
+function dungeonHitTest(mx, my) {
+  const dg = curDungeon(); if (!dg) return null;
+  // Check nubs first
+  for (const room of dg.rooms) {
+    const pos = dg.layout?.positions?.[room.id]; if (!pos) continue;
+    for (const slot of (room.doorSlots ?? [])) {
+      const { x, y } = slotNubPos(pos, slot, room);
+      if (Math.hypot(mx - x, my - y) <= 6) return { type: 'nub', roomId: room.id, slotId: slot.id };
+    }
+  }
+  // Check room bodies
+  for (const room of dg.rooms) {
+    const pos = dg.layout?.positions?.[room.id]; if (!pos) continue;
+    const W = room.cols * DTHUMB_PX, H = room.rows * DTHUMB_PX;
+    if (mx >= pos.x && mx <= pos.x + W && my >= pos.y && my <= pos.y + H)
+      return { type: 'room', roomId: room.id };
+  }
+  return null;
+}
+
+if (dungeonCanvas) {
+  dungeonCanvas.addEventListener('mousedown', e => {
+    const rect = dungeonCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const hit = dungeonHitTest(mx, my);
+    if (!hit) return;
+    if (hit.type === 'nub') {
+      if (!dungeonConnStart) {
+        dungeonConnStart = { roomId: hit.roomId, slotId: hit.slotId };
+        renderDungeonEditor();
+      } else {
+        // Complete connection (or cancel if same)
+        if (hit.roomId !== dungeonConnStart.roomId || hit.slotId !== dungeonConnStart.slotId) {
+          const dg = curDungeon();
+          // Remove existing connections on either slot
+          dg.connections = (dg.connections ?? []).filter(c =>
+            !(c.slotA === dungeonConnStart.slotId || c.slotB === dungeonConnStart.slotId ||
+              c.slotA === hit.slotId || c.slotB === hit.slotId)
+          );
+          dg.connections.push({ id: 'conn-'+Math.random().toString(36).slice(2,8),
+            roomA: dungeonConnStart.roomId, slotA: dungeonConnStart.slotId,
+            roomB: hit.roomId,             slotB: hit.slotId });
+          showToast('Rooms connected', 'success');
+          autosave();
+        }
+        dungeonConnStart = null;
+        renderDungeonEditor();
+      }
+    } else if (hit.type === 'room') {
+      // Select room
+      const dg = curDungeon();
+      const ri = dg.rooms.findIndex(r => r.id === hit.roomId);
+      if (ri >= 0) { activeRoom = ri; buildTimeline(); renderDungeonEditor(); }
+      // Start drag
+      const pos = dg.layout.positions[hit.roomId];
+      dungeonDragState = { roomId: hit.roomId, startMX: mx, startMY: my, startRX: pos.x, startRY: pos.y };
+      dungeonConnStart = null;
+    }
+  });
+
+  dungeonCanvas.addEventListener('mousemove', e => {
+    if (!dungeonDragState) return;
+    const rect = dungeonCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const dg = curDungeon(); if (!dg) return;
+    const pos = dg.layout.positions[dungeonDragState.roomId];
+    if (pos) {
+      pos.x = dungeonDragState.startRX + (mx - dungeonDragState.startMX);
+      pos.y = dungeonDragState.startRY + (my - dungeonDragState.startMY);
+    }
+    renderDungeonEditor();
+  });
+
+  dungeonCanvas.addEventListener('mouseup', () => { if (dungeonDragState) { autosave(); dungeonDragState = null; } });
+  dungeonCanvas.addEventListener('mouseleave', () => { dungeonDragState = null; });
+
+  // Right-click nub = delete connection
+  dungeonCanvas.addEventListener('contextmenu', e => {
+    e.preventDefault();
+    const rect = dungeonCanvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const hit = dungeonHitTest(mx, my);
+    if (hit?.type === 'nub') {
+      const dg = curDungeon(); if (!dg) return;
+      const before = dg.connections.length;
+      dg.connections = dg.connections.filter(c =>
+        !(c.slotA === hit.slotId || c.slotB === hit.slotId)
+      );
+      if (dg.connections.length < before) { showToast('Connection removed'); autosave(); }
+      dungeonConnStart = null;
+      renderDungeonEditor();
+    }
+  });
+}
+
+window.addEventListener('resize', () => { if (dungeonEditorMode) { resizeDungeonCanvas(); renderDungeonEditor(); } });
 
 // ── Bootstrap ────────────────────────────────────────────────────────────
 (function init(){

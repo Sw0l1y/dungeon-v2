@@ -1,5 +1,6 @@
 import { Level  } from './Level.js';
 import { Player } from '../entities/Player.js';
+import { Door   } from '../entities/Door.js';
 
 const DEFAULT_TILE = 40;
 
@@ -17,10 +18,27 @@ export class DynamicLevel extends Level {
     this.worldWidth  = (config.cols ?? this.map[0].length) * this.tileSize;
     this.worldHeight = (config.rows ?? this.map.length)    * this.tileSize;
 
-    // Player spawn point (tile coords → world centre of that tile)
+    // Player spawn point — overridden by entry slot when traversing a door
     const ts = this.tileSize;
     this._spawnX = ((config.playerSpawn?.col ?? Math.floor(this.map[0].length / 2)) + 0.5) * ts;
     this._spawnY = ((config.playerSpawn?.row ?? Math.floor(this.map.length    / 2)) + 0.5) * ts;
+
+    // Entry-slot override: player arrives through a specific door slot
+    const entrySlotId = this.game.state.entrySlotId;
+    if (entrySlotId) {
+      const slot = config.doorSlots?.find(s => s.id === entrySlotId);
+      if (slot) {
+        if (slot.dir === 'N') { this._spawnX = (slot.col + 0.5) * ts; this._spawnY = 1.8 * ts; }
+        else if (slot.dir === 'S') { this._spawnX = (slot.col + 0.5) * ts; this._spawnY = (config.rows - 1.8) * ts; }
+        else if (slot.dir === 'E') { this._spawnX = (config.cols - 1.8) * ts; this._spawnY = (slot.row + 0.5) * ts; }
+        else                       { this._spawnX = 1.8 * ts;                 this._spawnY = (slot.row + 0.5) * ts; }
+      }
+      this.game.state.entrySlotId = null;  // consume so next room uses its own spawn
+    }
+
+    // Door slots
+    this._doorSlotConfig = config.doorSlots ?? [];
+    this.doors = [];
 
     // Custom tile colors (falls back to default dark palette)
     this.tileColors = {
@@ -54,6 +72,13 @@ export class DynamicLevel extends Level {
         cfg.binding, cfg.name, cfg.color, cfg.classId ?? 'sword',
       ));
     });
+
+    // Spawn door entities from door-slot metadata
+    for (const slot of this._doorSlotConfig) {
+      const door = new Door(this, slot);
+      this.addEntity(door);
+      this.doors.push(door);
+    }
 
     // Apply persistent shop upgrades (no-op when upgrades haven't been set yet)
     const upg = this.game.state.upgrades;

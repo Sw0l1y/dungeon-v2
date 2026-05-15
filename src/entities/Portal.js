@@ -32,6 +32,10 @@ export class Portal {
     // Multiplayer: track which player instances have pressed enter
     this._enteredSet = new Set();
 
+    // Floor-Key lock: set to true when portal requires the Floor Key to enter
+    this.locked      = false;
+    this._unlockT    = 0;   // brief unlock-flash animation
+
     this._particles = [];
     this._initParticles();
   }
@@ -112,6 +116,17 @@ export class Portal {
         }
       }
     }
+
+    // Auto-unlock when floor key is collected
+    if (this.locked) {
+      if (this.level.game.state.floorKey) {
+        this.locked   = false;
+        this._unlockT = 1.2;
+      } else {
+        return;  // locked — skip particle/gravity/entry logic
+      }
+    }
+    if (this._unlockT > 0) this._unlockT = Math.max(0, this._unlockT - dt);
 
     // ── Entry trigger — ALL alive players must press interact near the portal ──
     if (!this._triggered && this.onEnter) {
@@ -317,6 +332,46 @@ export class Portal {
     const nearPlayer = this.level.players.some(
       p => p.alive && Math.hypot(p.x - x, p.y - y) < 150
     );
+
+    // Locked overlay — shown when portal requires Floor Key
+    if (this.locked) {
+      const lp = 0.65 + 0.28 * Math.sin(t / 320);
+      ctx.save();
+      // Red-orange tint over the void
+      ctx.globalAlpha = lp * 0.45;
+      ctx.fillStyle   = '#ff4400';
+      ctx.beginPath(); ctx.arc(x, y, R, 0, Math.PI * 2); ctx.fill();
+      // Lock icon over the core
+      ctx.globalAlpha = lp;
+      ctx.fillStyle   = '#ff6633';
+      ctx.font        = `bold ${Math.round(R * 0.7)}px "Trebuchet MS", sans-serif`;
+      ctx.textAlign   = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('🔒', x, y);
+      if (nearPlayer) {
+        ctx.fillStyle = `rgba(255,120,60,${lp * 0.9})`;
+        ctx.font      = 'bold 11px "Trebuchet MS", sans-serif';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('— LOCKED —', x, y - R - 26);
+        ctx.font      = '10px "Trebuchet MS", sans-serif';
+        ctx.fillStyle = `rgba(255,200,140,${lp * 0.75})`;
+        ctx.fillText('Find the Floor Key', x, y - R - 12);
+      }
+      ctx.restore();
+      return;
+    }
+
+    // Unlock flash
+    if (this._unlockT > 0) {
+      const a = Math.min(1, this._unlockT) * 0.6;
+      ctx.save();
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = '#4cffb0';
+      ctx.lineWidth   = 4;
+      ctx.beginPath(); ctx.arc(x, y, R * 1.3, 0, Math.PI * 2); ctx.stroke();
+      ctx.restore();
+    }
+
     if (nearPlayer) {
       const ta = 0.62 + 0.32 * Math.sin(t / 210);
       ctx.textAlign    = 'center';

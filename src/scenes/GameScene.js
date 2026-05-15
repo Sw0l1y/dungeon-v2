@@ -8,6 +8,7 @@ import { PauseScene     } from './PauseScene.js';
 import { TitleScene     } from './TitleScene.js';
 import { ShopScene, defaultUpgrades } from './ShopScene.js';
 import { Portal         } from '../entities/Portal.js';
+import { FloorKey       } from '../entities/FloorKey.js';
 import { Projectile     } from '../entities/Projectile.js';
 import { SwordSwing     } from '../entities/SwordSwing.js';
 import { EnemyProjectile} from '../entities/EnemyProjectile.js';
@@ -16,12 +17,44 @@ import { Boomerang      } from '../entities/Boomerang.js';
 
 export class GameScene extends Scene {
   onEnter() {
-    // Load the room for the current campaign index, fall back to built-in Level1.
-    // Shop rooms (type:'shop') have no tile data — they route to ShopScene instead,
-    // but guard here just in case the roomIndex lands on one unexpectedly.
-    const roomIdx = this.game.state.roomIndex ?? 0;
-    const roomCfg = this.game.maps?.campaign?.[roomIdx];
+    // ── Room/dungeon loading ──────────────────────────────────────────────────
+    // Supports two maps.json formats:
+    //   OLD: campaign: [ roomObj, roomObj, ... ]  (flat list)
+    //   NEW: campaign: [ { id, name, rooms:[...], connections:[...] }, ... ]
+    const maps = this.game.maps;
+    const isNewFormat = maps?.campaign?.[0]?.rooms != null;
+    let roomCfg = null;
+
+    if (isNewFormat) {
+      const dungeonIdx  = this.game.state.dungeonIndex ?? 0;
+      this._dungeon     = maps.campaign[dungeonIdx] ?? null;
+      if (this._dungeon) {
+        const roomId = this.game.state.currentRoomId;
+        roomCfg = roomId
+          ? this._dungeon.rooms.find(r => r.id === roomId)
+          : this._dungeon.rooms.find(r => r.tags?.includes('start')) ?? this._dungeon.rooms[0];
+        this.game.state.currentRoomId = roomCfg?.id ?? null;
+      }
+    } else {
+      this._dungeon = null;
+      const roomIdx = this.game.state.roomIndex ?? 0;
+      roomCfg = maps?.campaign?.[roomIdx];
+    }
+
+    this._roomConfig = roomCfg ?? null;
     this.level = (roomCfg && roomCfg.type !== 'shop') ? new DynamicLevel(this.game, roomCfg) : new Level1(this.game);
+
+    // ── Door traversal callbacks (new-format dungeons only) ───────────────────
+    this._doorsLocked      = false;
+    this._floorKeySpawned  = false;
+    if (this._dungeon && this.level.doors?.length) {
+      for (const door of this.level.doors) {
+        door.onTraverse = (slot) => this._handleDoorTraverse(slot);
+      }
+    }
+
+    // Ensure floor-key state is initialized
+    this.game.state.floorKey = this.game.state.floorKey ?? false;
     this.camera = new Camera(this.game.canvas.width, this.game.canvas.height);
     this.level.onEnter();
     this.waves  = new WaveManager(this.level);
@@ -242,12 +275,100 @@ export class GameScene extends Scene {
 
     // Init run stats (reset each new game)
     this.game.state.stats = { enemiesKilled: 0, timeElapsed: 0 };
+
+    // Pre-spawn a locked portal in exit rooms (new dungeon format)
+    if (this._dungeon && roomCfg?.tags?.includes('exit') && !this._portalSpawned) {
+      this._portalSpawned = true;
+      const exitPortal      = new Portal(this.level, this._introCX, this._introCY);
+      exitPortal.locked     = true;
+      exitPortal.onEnter    = () => this._handlePortalEnter();
+      this.level.addEntity(exitPortal);
+    }
   }
 
   onExit() {
     this.level.onExit();
     // Leave net session open (DeathScene / next scene may inspect stats)
     // Caller is responsible for calling net.close() if needed
+  }
+
+  // ── Dungeon-traversal helpers ───────────────────────────────────────────────
+
+  _lockAllDoors() {
+    this._doorsLocked = true;
+    for (const d of this.level.doors ?? []) d.lock();
+    if (this._net) this._net.send({ t: 'doorsLock' });
+  }
+
+  _unlockAllDoors() {
+    this._doorsLocked = false;
+    for (const d of this.level.doors ?? []) d.unlock();
+    if (this._net) this._net.send({ t: 'doorsUnlock' });
+  }
+
+  _handlePortalEnter() {
+    const game = this.game;
+    const maps = game.maps;
+
+    if (this._dungeon) {
+      // NEW format: advance to next dungeon in campaign
+      const nextDungeonIdx = (game.state.dungeonIndex ?? 0) + 1;
+      game.state.floorKey       = false;  // reset for next dungeon
+      game.state.currentRoomId  = null;
+      if (this._net) this._net.send({ t: 'roomNext', dungeonIdx: nextDungeonIdx, roomIdx: 0 });
+      if (nextDungeonIdx < maps.campaign.length) {
+        game.state.dungeonIndex = nextDungeonIdx;
+        game.scenes.switch(new GameScene(game));
+      } else {
+        game.state.dungeonIndex = 0;
+        game.scenes.switch(new TitleScene(game));
+      }
+    } else {
+      // OLD format: advance to next flat room
+      const campaign = maps?.campaign;
+      const nextIdx  = (game.state.roomIndex ?? 0) + 1;
+      if (this._net) this._net.send({ t: 'roomNext', roomIdx: nextIdx });
+      if (campaign && nextIdx < campaign.length) {
+        game.state.roomIndex = nextIdx;
+        const nextRoom = campaign[nextIdx];
+        game.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(game) : new GameScene(game));
+      } else {
+        game.state.roomIndex = 0;
+        game.scenes.switch(new TitleScene(game));
+      }
+    }
+  }
+
+  _handleDoorTraverse(slot) {
+    if (!this._dungeon) return;
+    const game    = this.game;
+    const dungeon = this._dungeon;
+    const curId   = game.state.currentRoomId;
+
+    // Find the connection that uses this slot
+    const conn = dungeon.connections?.find(c =>
+      (c.roomA === curId && c.slotA === slot.id) ||
+      (c.roomB === curId && c.slotB === slot.id)
+    );
+    if (!conn) return;  // dead end — no connection
+
+    const goingToA = conn.roomB === curId;
+    const nextRoomId   = goingToA ? conn.roomA : conn.roomB;
+    const entrySlotId  = goingToA ? conn.slotA : conn.slotB;
+
+    const nextRoom = dungeon.rooms?.find(r => r.id === nextRoomId);
+    if (!nextRoom) return;
+
+    game.state.currentRoomId = nextRoomId;
+    game.state.entrySlotId   = entrySlotId;
+
+    if (this._net) this._net.send({ t: 'roomDoor', roomId: nextRoomId, entrySlotId });
+
+    if (nextRoom.type === 'shop' || nextRoom.tags?.includes('shop')) {
+      game.scenes.switch(new ShopScene(game));
+    } else {
+      game.scenes.switch(new GameScene(game));
+    }
   }
 
   update(dt) {
@@ -424,34 +545,45 @@ export class GameScene extends Scene {
       this.waves.update(dt);
     }
 
-    // Spawn death portal at map centre after boss is defeated
+    // ── Door locking / unlocking (new dungeon format, host/solo only) ─────────
+    if (this._dungeon && this.level.doors?.length && this._netRole !== 'client') {
+      if (!this._doorsLocked && this.waves.active) {
+        this._lockAllDoors();
+      } else if (this._doorsLocked && this.waves.cleared) {
+        this._unlockAllDoors();
+      }
+    }
+
+    // ── Floor Key spawn after main-boss dies (new dungeon format) ─────────────
+    if (this._dungeon && !this._floorKeySpawned
+        && this._roomConfig?.tags?.includes('main-boss')
+        && this._netRole !== 'client') {
+      const bossDown = this.waves.bossDefeated;
+      if (bossDown && !this.game.state.floorKey) {
+        this._floorKeySpawned = true;
+        const key = new FloorKey(this.level, this._introCX, this._introCY);
+        key.onCollect = () => {
+          this.game.state.floorKey = true;
+          if (this._net) this._net.send({ t: 'floorKey' });
+        };
+        this.level.addEntity(key);
+      }
+    }
+
+    // Spawn death portal at map centre after boss is defeated (old format OR non-exit new rooms)
     const bossDefeated = this._netRole === 'client'
       ? this._remoteWave.bd
       : this.waves.bossDefeated;
 
-    if (bossDefeated && !this._portalSpawned) {
+    // In new format only spawn the old-style portal for non-exit, non-main-boss rooms that still have bosses
+    const skipOldPortal = this._dungeon && (
+      this._roomConfig?.tags?.includes('exit') ||
+      this._roomConfig?.tags?.includes('main-boss')
+    );
+
+    if (bossDefeated && !this._portalSpawned && !skipOldPortal) {
       const portal = new Portal(this.level, this._introCX, this._introCY);
-      // Callback to advance rooms — avoids circular import between Portal and GameScene
-      portal.onEnter = () => {
-        const game     = this.game;
-        const campaign = game.maps?.campaign;
-        const nextIdx  = (game.state.roomIndex ?? 0) + 1;
-        const nextRoom = campaign?.[nextIdx];
-
-        // Tell client to follow (fixes existing bug where client stayed behind)
-        if (this._net) {
-          this._net.send({ t: 'roomNext', roomIdx: nextIdx });
-        }
-
-        if (campaign && nextIdx < campaign.length) {
-          game.state.roomIndex = nextIdx;
-          game.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(game) : new GameScene(game));
-        } else {
-          // Campaign complete — reset and return to title
-          game.state.roomIndex = 0;
-          game.scenes.switch(new TitleScene(game));
-        }
-      };
+      portal.onEnter = () => this._handlePortalEnter();
       this.level.addEntity(portal);
       this._portalSpawned = true;
     }
@@ -996,22 +1128,56 @@ export class GameScene extends Scene {
         this.game.scenes.switch(new DeathScene(this.game));
       }
 
-      // Host portal transition — client follows immediately (server-authoritative).
-      // This fixes the pre-existing bug where the client never received the room-advance
-      // signal and stayed frozen in the old GameScene after the host moved on.
+      // Host portal/door transition — client follows immediately (server-authoritative).
       if (data.t === 'roomNext') {
-        const g        = this.game;
-        const campaign = g.maps?.campaign;
-        const nextIdx  = data.roomIdx;
-        if (!campaign || nextIdx >= campaign.length) {
-          g.state.roomIndex = 0;
-          g.scenes.switch(new TitleScene(g));
+        const g    = this.game;
+        const maps = g.maps;
+        const isNewFormat = maps?.campaign?.[0]?.rooms != null;
+        if (isNewFormat) {
+          const nextDungeonIdx = data.dungeonIdx ?? ((g.state.dungeonIndex ?? 0) + 1);
+          g.state.dungeonIndex  = nextDungeonIdx;
+          g.state.currentRoomId = null;
+          g.state.floorKey      = false;
+          if (nextDungeonIdx < maps.campaign.length) {
+            g.scenes.switch(new GameScene(g));
+          } else {
+            g.state.dungeonIndex = 0;
+            g.scenes.switch(new TitleScene(g));
+          }
         } else {
-          g.state.roomIndex = nextIdx;
-          const nextRoom = campaign[nextIdx];
-          g.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(g) : new GameScene(g));
+          const campaign = maps?.campaign;
+          const nextIdx  = data.roomIdx;
+          if (!campaign || nextIdx >= campaign.length) {
+            g.state.roomIndex = 0;
+            g.scenes.switch(new TitleScene(g));
+          } else {
+            g.state.roomIndex = nextIdx;
+            const nextRoom = campaign[nextIdx];
+            g.scenes.switch(nextRoom?.type === 'shop' ? new ShopScene(g) : new GameScene(g));
+          }
         }
       }
+
+      // Host door traversal — client follows to connected room
+      if (data.t === 'roomDoor') {
+        const g = this.game;
+        g.state.currentRoomId = data.roomId;
+        g.state.entrySlotId   = data.entrySlotId;
+        const dungeon  = g.maps?.campaign?.[g.state.dungeonIndex ?? 0];
+        const nextRoom = dungeon?.rooms?.find(r => r.id === data.roomId);
+        if (nextRoom?.type === 'shop' || nextRoom?.tags?.includes('shop')) {
+          g.scenes.switch(new ShopScene(g));
+        } else {
+          g.scenes.switch(new GameScene(g));
+        }
+      }
+
+      // Host door lock/unlock state sync
+      if (data.t === 'doorsLock')   { for (const d of this.level.doors ?? []) d.lock(); }
+      if (data.t === 'doorsUnlock') { for (const d of this.level.doors ?? []) d.unlock(); }
+
+      // Host collected floor key — propagate to client
+      if (data.t === 'floorKey') { this.game.state.floorKey = true; }
     }
   }
 
@@ -1934,6 +2100,22 @@ export class GameScene extends Scene {
     ctx.beginPath(); ctx.roundRect(W - goldTw - 26, 10, goldTw + 16, 20, 4); ctx.fill();
     ctx.fillStyle   = gold > 0 ? '#ffd166' : 'rgba(255,209,102,0.32)';
     ctx.fillText(goldText, W - 16, 14);
+
+    // Floor Key indicator (new dungeon format — shown when dungeon has a main-boss)
+    if (this._dungeon) {
+      const hasKey  = this.game.state.floorKey;
+      const keyText = '🗝 Floor Key';
+      ctx.font      = 'bold 12px "Trebuchet MS", sans-serif';
+      const keyTw   = ctx.measureText(keyText).width;
+      ctx.fillStyle = 'rgba(8,14,26,0.65)';
+      ctx.beginPath(); ctx.roundRect(W - keyTw - 26, 36, keyTw + 16, 20, 4); ctx.fill();
+      ctx.fillStyle = hasKey ? '#ffd24c' : 'rgba(255,210,76,0.22)';
+      if (hasKey) {
+        ctx.shadowColor = '#ffd24c'; ctx.shadowBlur = 8;
+      }
+      ctx.fillText(keyText, W - 16, 40);
+      ctx.shadowBlur = 0;
+    }
 
     // Top-center: revive prompt for alive players near a downed ally
     const REVIVE_RANGE = 70;

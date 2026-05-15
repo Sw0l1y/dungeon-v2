@@ -19,6 +19,8 @@ export class WaveManager {
 
   get remaining()  { return this._enemies.filter(e => e.alive).length; }
   get countdown()  { return this._countdown; }
+  // True once all waves have finished AND no enemies remain AND no countdown is pending
+  get cleared()    { return this.wave > 0 && !this.active && !this._enemies.some(e => e.alive) && this._countdown === 0; }
 
   startWave() {
     if (this.active || this.bossDefeated) return;
