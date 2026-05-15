@@ -797,7 +797,7 @@ export class GameScene extends Scene {
     return {
       t: 'gs',
       sq: this._netStateSeq++,
-      p: ps.map(pl => ({
+      p: ps.map((pl, i) => ({
         x:  pl.x,
         y:  pl.y,
         hp: pl.hp,
