@@ -1257,11 +1257,9 @@ function slotDirFromPos(room, col, row) {
 
 function placeDoorSlot(col, row) {
   const room = curRoom(); if (!room) return;
-  const dir = slotDirFromPos(room, col, row);
-  if (!dir) { showToast('Door slots must be on a border wall'); return; }
   if (!room.doorSlots) room.doorSlots = [];
 
-  // Check if the clicked tile falls inside any existing slot's 3-tile passage
+  // Always check for existing slots first — allows removing floating slots after resize
   const hitIdx = room.doorSlots.findIndex(s =>
     doorSlotTiles(room, s).some(([tr, tc]) => tr === row && tc === col)
   );
@@ -1274,7 +1272,10 @@ function placeDoorSlot(col, row) {
     );
     showToast('Door slot removed');
   } else {
-    // Place new slot — clamp center so the 3-tile passage fits within the border
+    // Placing — must be on a border
+    const dir = slotDirFromPos(room, col, row);
+    if (!dir) { showToast('Door slots must be on a border wall'); return; }
+    // Clamp center so the 3-tile passage fits within the border
     if (dir === 'N' || dir === 'S') {
       col = Math.max(1, Math.min(room.cols - 2, col));
       row = dir === 'N' ? 0 : room.rows - 1;
@@ -1387,8 +1388,19 @@ document.getElementById('apply-resize').addEventListener('click',()=>{
   room.tiles=newTiles; room.cols=newCols; room.rows=newRows;
   room.playerSpawn.col=Math.min(room.playerSpawn.col,newCols-2);
   room.playerSpawn.row=Math.min(room.playerSpawn.row,newRows-2);
+  // Remove door slots that no longer sit on the new border or whose passage goes OOB
+  const before = (room.doorSlots ?? []).length;
+  room.doorSlots = (room.doorSlots ?? []).filter(s => {
+    if (s.dir === 'N') return s.row === 0            && s.col >= 1 && s.col <= newCols - 2;
+    if (s.dir === 'S') return s.row === newRows - 1  && s.col >= 1 && s.col <= newCols - 2;
+    if (s.dir === 'E') return s.col === newCols - 1  && s.row >= 1 && s.row <= newRows - 2;
+    if (s.dir === 'W') return s.col === 0            && s.row >= 1 && s.row <= newRows - 2;
+    return false;
+  });
+  const removed = before - room.doorSlots.length;
   colsInput.value=newCols; rowsInput.value=newRows;
-  resizeCanvas(room); render(); showToast(`Resized to ${newCols}×${newRows}`);
+  resizeCanvas(room); render();
+  showToast(`Resized to ${newCols}×${newRows}${removed ? ` — ${removed} door slot${removed>1?'s':''} removed` : ''}`);
 });
 
 // ── Add room ──────────────────────────────────────────────────────────────
