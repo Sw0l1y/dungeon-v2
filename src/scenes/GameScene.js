@@ -12,6 +12,7 @@ import { Projectile     } from '../entities/Projectile.js';
 import { SwordSwing     } from '../entities/SwordSwing.js';
 import { EnemyProjectile} from '../entities/EnemyProjectile.js';
 import { Decoy          } from '../entities/Decoy.js';
+import { Boomerang      } from '../entities/Boomerang.js';
 
 export class GameScene extends Scene {
   onEnter() {
@@ -71,6 +72,7 @@ export class GameScene extends Scene {
     // so they glide at 60fps rather than snapping every 20hz packet.
     this._smoothProjPl = [];   // { x,y,vx,vy,color,stale }
     this._smoothProjEp = [];   // { x,y,vx,vy,stale }
+    this._smoothProjBm = [];   // { x,y,vx,vy,rot,ret,color,stale }
     // Authoritative wave state received from host (used for client HUD)
     this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
     // Send-rate timers
@@ -406,8 +408,10 @@ export class GameScene extends Scene {
       // expire entries that weren't refreshed in the last two packet windows.
       for (const sp of this._smoothProjPl) { sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.stale += dt; }
       for (const sp of this._smoothProjEp) { sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.stale += dt; }
+      for (const sp of this._smoothProjBm) { sp.x += sp.vx * dt; sp.y += sp.vy * dt; sp.rot += dt * (sp.ret ? 16 : 11); sp.stale += dt; }
       this._smoothProjPl = this._smoothProjPl.filter(sp => sp.stale < 0.12);
       this._smoothProjEp = this._smoothProjEp.filter(sp => sp.stale < 0.12);
+      this._smoothProjBm = this._smoothProjBm.filter(sp => sp.stale < 0.18);
     }
 
     // Wave manager: only the host (or solo player) runs waves / spawns enemies
@@ -864,6 +868,9 @@ export class GameScene extends Scene {
         ep: ents
           .filter(e => e instanceof EnemyProjectile)
           .map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy)]),
+        bm: ents
+          .filter(e => e instanceof Boomerang && isHostPlayerProj(e))
+          .map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.vx), Math.round(e.vy), +e._rotation.toFixed(2), e._returning ? 1 : 0, e.owner?.color ?? '#fff']),
       },
       wv: {
         n:   this.waves.wave,
@@ -1153,6 +1160,14 @@ export class GameScene extends Scene {
 
       mergeProj(state.proj.pl ?? [], this._smoothProjPl, true);
       mergeProj(state.proj.ep ?? [], this._smoothProjEp, false);
+
+      // Boomerangs — merge positions then sync rotation + returning state
+      const bmReceived = state.proj.bm ?? [];
+      mergeProj(bmReceived, this._smoothProjBm, true);
+      for (const [rx, ry, rvx, rvy, rrot, rret, color] of bmReceived) {
+        const sp = this._smoothProjBm.find(s => s.color === color && Math.hypot(s.x - rx, s.y - ry) < 90);
+        if (sp) { sp.rot = rrot; sp.ret = !!rret; sp.vx = rvx; sp.vy = rvy; }
+      }
     }
 
     // FX events: spawn death particles + visual gold shards on client
@@ -1591,6 +1606,49 @@ export class GameScene extends Scene {
       ctx.beginPath(); ctx.arc(ex, ey, 3.15, 0, Math.PI * 2); ctx.fill();
     }
     ctx.lineCap = 'butt';
+
+    // Ghost boomerangs — same wing silhouette as Boomerang.draw(), no trail needed
+    for (const sp of this._smoothProjBm) {
+      const { x, y, rot, ret, color } = sp;
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(rot ?? 0);
+
+      ctx.globalAlpha = ret ? 0.38 : 0.18;
+      ctx.shadowColor = color;
+      ctx.shadowBlur  = ret ? 20 : 10;
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = ret ? 16 : 10;
+      ctx.beginPath(); ctx.arc(0, 0, 9, 0, Math.PI * 2); ctx.stroke();
+      ctx.shadowBlur  = 0;
+
+      const drawWing = () => {
+        const W = 14, thick = 4.5, curve = 3.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -1);
+        ctx.quadraticCurveTo(W * 0.5, -curve - 1, W, -thick * 0.5);
+        ctx.quadraticCurveTo(W * 1.08, 0, W, thick * 0.5 + 1);
+        ctx.quadraticCurveTo(W * 0.5, curve, 0, 1);
+        ctx.closePath();
+        ctx.fill();
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth   = 1.2;
+        ctx.lineCap     = 'round';
+        ctx.beginPath();
+        ctx.moveTo(1, -0.5);
+        ctx.quadraticCurveTo(W * 0.5, -curve - 2, W - 1, -thick * 0.3);
+        ctx.stroke();
+      };
+
+      ctx.globalAlpha = 0.92; ctx.fillStyle = color; drawWing();
+      ctx.save(); ctx.rotate(Math.PI * 0.72); ctx.globalAlpha = 0.88; ctx.fillStyle = color; drawWing(); ctx.restore();
+
+      ctx.globalAlpha = 1;   ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.arc(0, 0, 2.8, 0, Math.PI * 2); ctx.fill();
+      ctx.globalAlpha = 0.6; ctx.fillStyle = color;     ctx.beginPath(); ctx.arc(0, 0, 1.4, 0, Math.PI * 2); ctx.fill();
+
+      ctx.restore();
+    }
   }
 
   // ── Gold shard system ────────────────────────────────────────────────────────
