@@ -394,12 +394,12 @@
         <div class="tool-label">Grid Size</div>
         <div class="resize-row">
           <label>Cols</label>
-          <input type="number" class="resize-input" id="cols-input" min="10" max="60" value="30" />
+          <input type="number" class="resize-input" id="cols-input" min="4" max="80" value="30" />
           <button class="resize-apply" id="apply-resize">Apply</button>
         </div>
         <div class="resize-row">
           <label>Rows</label>
-          <input type="number" class="resize-input" id="rows-input" min="8" max="40" value="17" />
+          <input type="number" class="resize-input" id="rows-input" min="4" max="60" value="17" />
         </div>
         <p class="hint">Shrinking crops from the right/bottom edge.</p>
       </div>
@@ -1369,8 +1369,8 @@ verInput.addEventListener('input',()=>{ state.mapVersion=verInput.value; verDisp
 document.getElementById('apply-resize').addEventListener('click',()=>{
   const room=curRoom();
   if(!room||room.type==='shop') return;
-  const newCols=Math.max(10,Math.min(60,parseInt(colsInput.value)||room.cols));
-  const newRows=Math.max(8,Math.min(40,parseInt(rowsInput.value)||room.rows));
+  const newCols=Math.max(4,Math.min(80,parseInt(colsInput.value)||room.cols));
+  const newRows=Math.max(4,Math.min(60,parseInt(rowsInput.value)||room.rows));
   pushUndo();
   const newTiles=[];
   for(let r=0;r<newRows;r++){
