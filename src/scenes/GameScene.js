@@ -73,6 +73,7 @@ export class GameScene extends Scene {
     this._smoothProjPl = [];   // { x,y,vx,vy,color,stale }
     this._smoothProjEp = [];   // { x,y,vx,vy,stale }
     this._smoothProjBm = [];   // { x,y,vx,vy,rot,ret,color,stale }
+    this._ghostMinions = [];   // { x,y,hpPct,color } — client-side skeleton ghosts
     // Authoritative wave state received from host (used for client HUD)
     this._remoteWave = { n: 0, act: false, rem: 0, bd: false, cd: 0 };
     // Send-rate timers
@@ -883,6 +884,10 @@ export class GameScene extends Scene {
         bd:  this.waves.bossDefeated ? 1 : 0,
         cd:  this.waves.countdown,
       },
+      // Minions (necromancer skeletons) — simple position + hp snapshot
+      mn: ents
+        .filter(e => e.isMinion && e.alive)
+        .map(e => [Math.round(e.x), Math.round(e.y), Math.round(e.hp / e.maxHp * 255), e.owner?.color ?? '#44ff88']),
       // Buffered events (death particles, etc.) since last packet
       ev: this._pendingEvents.splice(0),
       // Gold — synced so client counter matches host in real-time
@@ -1204,6 +1209,11 @@ export class GameScene extends Scene {
       }
     }
 
+    // Ghost minions
+    if (state.mn !== undefined) {
+      this._ghostMinions = state.mn.map(([x, y, hpPct255, color]) => ({ x, y, hpPct: hpPct255 / 255, color }));
+    }
+
     // Update remote wave state (used for HUD)
     if (state.wv) {
       this._remoteWave = {
@@ -1239,9 +1249,10 @@ export class GameScene extends Scene {
     // Gold shards — drawn on top of the map in world space
     if (this._goldShards.length > 0) this._drawGoldShards(ctx);
 
-    // Ghost enemies + projectiles (client only)
+    // Ghost enemies, minions + projectiles (client only)
     if (this._netRole === 'client') {
       this._drawGhosts(ctx);
+      this._drawGhostMinions(ctx);
       this._drawGhostProjectiles(ctx);
     }
 
@@ -1327,6 +1338,31 @@ export class GameScene extends Scene {
         ctx.stroke();
         ctx.restore();
       }
+    }
+  }
+
+  _drawGhostMinions(ctx) {
+    for (const { x, y, hpPct, color } of this._ghostMinions) {
+      // Aura
+      ctx.save();
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = color;
+      ctx.lineWidth   = 5;
+      ctx.beginPath(); ctx.arc(x, y, 16, 0, Math.PI * 2); ctx.stroke();
+      // Body
+      ctx.globalAlpha = 1;
+      ctx.fillStyle   = '#ccd5c0';
+      ctx.beginPath(); ctx.arc(x, y, 11, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = '#556655'; ctx.lineWidth = 1.5; ctx.stroke();
+      // Eyes
+      ctx.fillStyle = '#1a2a1a';
+      ctx.beginPath(); ctx.arc(x - 3.5, y - 2, 2.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + 3.5, y - 2, 2.8, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = color; ctx.globalAlpha = 0.85;
+      ctx.beginPath(); ctx.arc(x - 3.5, y - 2, 1.2, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(x + 3.5, y - 2, 1.2, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
+      this._drawGhostHealthBar(ctx, x, y, -19, 26, 3, hpPct);
     }
   }
 

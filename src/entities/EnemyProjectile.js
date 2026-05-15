@@ -28,6 +28,16 @@ export class EnemyProjectile {
       }
     }
 
+    // Minion hit
+    for (const e of this.level.entities) {
+      if (!e.isMinion || !e.alive) continue;
+      if (Math.hypot(this.x - e.x, this.y - e.y) < this.radius + e.radius) {
+        e.takeDamage(this.damage);
+        this.level.removeEntity(this);
+        return;
+      }
+    }
+
     // Wall hit
     const { map, tileSize: ts } = this.level;
     const col = Math.floor(this.x / ts);

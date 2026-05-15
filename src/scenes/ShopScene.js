@@ -78,7 +78,11 @@ export class ShopScene extends Scene {
 
     this._net  = g.state.netSession ?? null;
     this._role = g.state.netRole    ?? null;   // null | 'host' | 'client'
-    this._solo = !this._net && (g.state.players?.length ?? 2) === 1;
+    // _solo: true only in offline single-player (controls _checkAllReady bypass)
+    // _singlePanel: true whenever this device has only 1 local player (controls UI layout)
+    const localCount = (g.state.players ?? []).filter(p => !p.remote).length;
+    this._solo        = !this._net && localCount === 1;
+    this._singlePanel = localCount === 1;
 
     this._p1 = { colIdx: 0, rowIdx: 0, message: null, ready: false };
     this._p2 = { colIdx: 0, rowIdx: 0, message: null, ready: false };
@@ -197,8 +201,34 @@ export class ShopScene extends Scene {
       if (isLocal && inp.justPressed('Escape')) this._leaveShop();
     }
 
-    // ── P2 nav + buy + ready  (local 2p or client) ───────────────────────────
-    if (!this._solo) {
+    // ── Client solo: use WASD/Space/X, send net messages ─────────────────────
+    if (isClient && this._singlePanel) {
+      if (inp.justPressed('KeyQ') || inp.justPressed('KeyA')) { this._p1.colIdx = (this._p1.colIdx - 1 + nCols) % nCols; this._clampRow(this._p1); }
+      if (inp.justPressed('KeyE') || inp.justPressed('KeyD')) { this._p1.colIdx = (this._p1.colIdx + 1) % nCols; this._clampRow(this._p1); }
+      const it1c = this._colItems(this._p1.colIdx);
+      if (it1c.length > 0) {
+        if (inp.justPressed('KeyW') || inp.justPressed('ArrowUp'))   this._p1.rowIdx = (this._p1.rowIdx - 1 + it1c.length) % it1c.length;
+        if (inp.justPressed('KeyS') || inp.justPressed('ArrowDown')) this._p1.rowIdx = (this._p1.rowIdx + 1) % it1c.length;
+      }
+      if (inp.justPressed('Space')) {
+        const item = this._selectedItem(this._p1);
+        if (item) {
+          const upg  = this.game.state.upgrades;
+          const tier = _getTier(upg, item.id);
+          const maxed = tier >= item.tiers || (item.id === 'flask' && upg.flaskBought);
+          if (maxed)                                   this._msg(this._p1, 'Already maxed!',  '#ff9944');
+          else if (this.game.state.gold < item.costs[tier]) this._msg(this._p1, 'Not enough gold!', '#ff6b6b');
+          else { this._net.send({ t: 'shopBuy', itemId: item.id }); this._msg(this._p1, 'Purchasing…', '#aaaaff'); }
+        }
+      }
+      if (inp.justPressed('KeyX')) {
+        this._p1.ready = !this._p1.ready;
+        this._net.send({ t: 'shopP2Ready', ready: this._p1.ready });
+      }
+    }
+
+    // ── P2 nav + buy + ready  (local 2p only) ────────────────────────────────
+    if (!this._singlePanel) {
       if (inp.justPressed('KeyU') || inp.justPressed('KeyJ')) { this._p2.colIdx = (this._p2.colIdx - 1 + nCols) % nCols; this._clampRow(this._p2); }
       if (inp.justPressed('KeyO') || inp.justPressed('KeyL')) { this._p2.colIdx = (this._p2.colIdx + 1) % nCols; this._clampRow(this._p2); }
       const it2 = this._colItems(this._p2.colIdx);
@@ -335,8 +365,8 @@ export class ShopScene extends Scene {
     this._drawGoldBadge(ctx, this.game.state.gold ?? 0, W - 12, 6, HDR_H - 12);
 
     // Bottom hint strip
-    const hint = this._solo
-      ? 'W/S nav · Q/E tab · Space buy · X ready · Esc leave'
+    const hint = this._singlePanel
+      ? (isClient ? 'W/S nav · Q/E tab · Space buy · X ready' : 'W/S nav · Q/E tab · Space buy · X ready · Esc leave')
       : 'P1: W/S nav · Q/E tab · Space buy · X ready    |    P2: I/K nav · U/O tab · Enter buy · M ready    |    Esc leave';
     ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.font = '8.5px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
@@ -348,7 +378,7 @@ export class ShopScene extends Scene {
     const pH = H - pY - 16;
     let pW, pX1, pX2;
 
-    if (this._solo) {
+    if (this._singlePanel) {
       pW  = Math.min(520, W - 40);
       pX1 = (W - pW) / 2;
     } else {
@@ -358,7 +388,7 @@ export class ShopScene extends Scene {
       pX2 = OUTER_PAD + pW + PANEL_GAP;
     }
 
-    const panelXs = this._solo ? [pX1] : [pX1, pX2];
+    const panelXs = this._singlePanel ? [pX1] : [pX1, pX2];
     for (const px of panelXs) {
       ctx.save();
       ctx.fillStyle = 'rgba(7,4,16,0.68)'; ctx.strokeStyle = 'rgba(255,209,102,0.09)'; ctx.lineWidth = 1;
@@ -367,10 +397,10 @@ export class ShopScene extends Scene {
     }
 
     this._drawPanel(ctx, this._p1, pX1, pY, pW, pH, 'Player 1', 'Q', 'E', 'Space', 'X');
-    if (!this._solo) this._drawPanel(ctx, this._p2, pX2, pY, pW, pH, 'Player 2', 'U', 'O', 'Enter', 'M');
+    if (!this._singlePanel) this._drawPanel(ctx, this._p2, pX2, pY, pW, pH, 'Player 2', 'U', 'O', 'Enter', 'M');
 
     // Both ready overlay
-    if (this._p1.ready && this._p2.ready) {
+    if (this._p1.ready && (this._singlePanel || this._p2.ready)) {
       const op = 0.70 + 0.30 * Math.sin(t / 300);
       ctx.save(); ctx.globalAlpha = op;
       ctx.fillStyle = '#7fff7f'; ctx.font = 'bold 18px "Trebuchet MS", sans-serif';
@@ -654,7 +684,7 @@ export class ShopScene extends Scene {
     this._drawKeyBadge(ctx, readyKey, CARD_X + CARD_W - IP, READY_Y + READY_H / 2, 'right');
     ctx.restore();
 
-    if (!this._solo && isReady && !otherReady) {
+    if (!this._singlePanel && isReady && !otherReady) {
       ctx.save(); ctx.globalAlpha = 0.35 + 0.20 * Math.sin(t / 600);
       ctx.fillStyle = '#7fff7f'; ctx.font = '8.5px "Trebuchet MS", sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'top';
