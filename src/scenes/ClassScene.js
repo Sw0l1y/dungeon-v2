@@ -61,6 +61,12 @@ export class ClassScene extends Scene {
 
     // ── Net message handlers ───────────────────────────────────────────────
     if (net) {
+      // Kick any peer that connects after the lobby has already started —
+      // they missed the lobbyStart message and would be stuck in OnlineLobbyScene.
+      if (role === 'host') {
+        net.onConnected = (peerId) => { net.sendTo(peerId, { t: 'kicked' }); };
+      }
+
       net.onMessage = (data) => {
         // Other device broadcasting their current picks
         if (data.t === 'classSync' && data.s) {

@@ -110,6 +110,10 @@ export class GameScene extends Scene {
       this._net.onDisconnected = () => {
         if (this._netRole === 'client') this._netDisconnected = true;
       };
+      // Kick any peer that connects after the game has started.
+      if (this._netRole === 'host') {
+        this._net.onConnected = (peerId) => { this._net.sendTo(peerId, { t: 'kicked' }); };
+      }
     }
 
     // Gold shards — world-space particles that get sucked into the exit portal.
