@@ -1,9 +1,9 @@
 {
-  "mapVersion": "cuck-v13",
+  "mapVersion": "Facility Breakout",
   "campaign": [
     {
       "id": "room-4ychi84",
-      "name": "Dev Test",
+      "name": "Facility 1",
       "cols": 30,
       "rows": 17,
       "tileSize": 40,
@@ -18,9 +18,9 @@
       },
       "waves": [
         {
-          "enemy": 3,
+          "enemy": 5,
           "sprinter": 0,
-          "ranger": 0,
+          "ranger": 1,
           "pairs": 0
         },
         {
@@ -576,11 +576,6 @@
           1
         ]
       ]
-    },
-    {
-      "id": "room-p94i5n9",
-      "name": "The Armory",
-      "type": "shop"
     },
     {
       "id": "room-3f9y09n",
@@ -1114,6 +1109,11 @@
           1
         ]
       ]
+    },
+    {
+      "id": "room-p94i5n9",
+      "name": "The Armory",
+      "type": "shop"
     },
     {
       "id": "room-zabv152",
