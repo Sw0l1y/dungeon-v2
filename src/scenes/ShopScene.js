@@ -366,7 +366,7 @@ export class ShopScene extends Scene {
 
     // Bottom hint strip
     const hint = this._singlePanel
-      ? (isClient ? 'W/S nav · Q/E tab · Space buy · X ready' : 'W/S nav · Q/E tab · Space buy · X ready · Esc leave')
+      ? (this._role === 'client' ? 'W/S nav · Q/E tab · Space buy · X ready' : 'W/S nav · Q/E tab · Space buy · X ready · Esc leave')
       : 'P1: W/S nav · Q/E tab · Space buy · X ready    |    P2: I/K nav · U/O tab · Enter buy · M ready    |    Esc leave';
     ctx.save(); ctx.fillStyle = 'rgba(255,255,255,0.14)'; ctx.font = '8.5px "Trebuchet MS", sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
