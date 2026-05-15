@@ -1,9 +1,9 @@
 {
-  "mapVersion": "cuck-v12",
+  "mapVersion": "cuck-v13",
   "campaign": [
     {
       "id": "room-4ychi84",
-      "name": "Facility 1",
+      "name": "Dev Test",
       "cols": 30,
       "rows": 17,
       "tileSize": 40,
@@ -22,24 +22,6 @@
           "sprinter": 0,
           "ranger": 0,
           "pairs": 0
-        },
-        {
-          "enemy": 4,
-          "sprinter": 1,
-          "ranger": 0,
-          "pairs": 0
-        },
-        {
-          "enemy": 5,
-          "sprinter": 2,
-          "ranger": 1,
-          "pairs": 1
-        },
-        {
-          "enemy": 6,
-          "sprinter": 3,
-          "ranger": 2,
-          "pairs": 1
         },
         {
           "boss": true,
@@ -594,6 +576,11 @@
           1
         ]
       ]
+    },
+    {
+      "id": "room-p94i5n9",
+      "name": "The Armory",
+      "type": "shop"
     },
     {
       "id": "room-3f9y09n",
@@ -1127,11 +1114,6 @@
           1
         ]
       ]
-    },
-    {
-      "id": "room-p94i5n9",
-      "name": "The Armory",
-      "type": "shop"
     },
     {
       "id": "room-zabv152",
