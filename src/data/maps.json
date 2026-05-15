@@ -24,6 +24,30 @@
           "pairs": 0
         },
         {
+          "enemy": 3,
+          "sprinter": 1,
+          "ranger": 2,
+          "pairs": 1
+        },
+        {
+          "enemy": 3,
+          "sprinter": 2,
+          "ranger": 3,
+          "pairs": 1
+        },
+        {
+          "enemy": 3,
+          "sprinter": 2,
+          "ranger": 3,
+          "pairs": 1
+        },
+        {
+          "enemy": 4,
+          "sprinter": 2,
+          "ranger": 3,
+          "pairs": 20
+        },
+        {
           "boss": true,
           "bossHp": 800,
           "bossP2Pct": 60,
