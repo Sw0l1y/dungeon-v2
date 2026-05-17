@@ -288,7 +288,7 @@
     <div id="dungeon-editor" style="display:none;flex:1;background:rgba(0,0,0,.12);position:relative;overflow:hidden;">
       <canvas id="dungeon-canvas" style="display:block;cursor:default;"></canvas>
       <div style="position:absolute;top:8px;right:10px;font-size:10px;color:var(--muted);line-height:1.7;pointer-events:none">
-        Click nub → nub to connect &nbsp;·&nbsp; Drag room to move &nbsp;·&nbsp; Right-click nub to remove
+        Click nub → nub to connect &nbsp;·&nbsp; Drag room to move &nbsp;·&nbsp; Right-click nub to remove connection &nbsp;·&nbsp; Right-click room to set as ★ start
       </div>
       <div style="position:absolute;bottom:12px;right:12px;display:flex;align-items:center;gap:8px;">
         <span style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Map Version</span>
@@ -450,7 +450,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v2.2';
+const EDITOR_VERSION = 'v2.3';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -1674,6 +1674,16 @@ function renderDungeonEditor() {
       dctx.strokeStyle = '#07111c'; dctx.lineWidth = 0.5;
       dctx.beginPath(); dctx.arc(nx, ny, 4, 0, Math.PI*2); dctx.fill(); dctx.stroke();
     }
+
+    // Start room star badge
+    if (tags.includes('start')) {
+      dctx.save();
+      dctx.fillStyle = '#4cffb0';
+      dctx.font = 'bold 11px sans-serif';
+      dctx.textAlign = 'left'; dctx.textBaseline = 'top';
+      dctx.fillText('★', pos.x + 2, pos.y + 2);
+      dctx.restore();
+    }
   }
 
   // Dead-end warnings (slots with no connection)
@@ -1769,7 +1779,7 @@ if (dungeonCanvas) {
   dungeonCanvas.addEventListener('mouseup', () => { if (dungeonDragState) { autosave(); dungeonDragState = null; } });
   dungeonCanvas.addEventListener('mouseleave', () => { dungeonDragState = null; });
 
-  // Right-click nub = delete connection
+  // Right-click: nub = delete connection | room body = set as start room
   dungeonCanvas.addEventListener('contextmenu', e => {
     e.preventDefault();
     const rect = dungeonCanvas.getBoundingClientRect();
@@ -1784,6 +1794,21 @@ if (dungeonCanvas) {
       if (dg.connections.length < before) { showToast('Connection removed'); autosave(); }
       dungeonConnStart = null;
       renderDungeonEditor();
+    } else if (hit?.type === 'room') {
+      const dg = curDungeon(); if (!dg) return;
+      // Remove 'start' from all rooms, add to clicked room
+      for (const r of dg.rooms) {
+        r.tags = (r.tags ?? []).filter(t => t !== 'start');
+      }
+      const target = dg.rooms.find(r => r.id === hit.roomId);
+      if (target) {
+        if (!target.tags) target.tags = [];
+        target.tags.push('start');
+        showToast(`"${target.name}" set as start room`, 'success');
+      }
+      buildTimeline();
+      renderDungeonEditor();
+      autosave();
     }
   });
 }

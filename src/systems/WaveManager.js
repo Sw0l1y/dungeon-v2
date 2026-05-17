@@ -25,14 +25,21 @@ export class WaveManager {
   startWave() {
     if (this.active || this.bossDefeated) return;
     this.wave++;
-    this.active      = true;
     this._enemies    = [];
-    this._spawnCache = null; // refresh so destroyed walls open new spawn areas
+    this._spawnCache = null;
 
     // Per-room wave config (set on level.waveConfig by DynamicLevel); falls back to
     // the hardcoded formula when not present or when this wave index has no entry.
     const waveConfigs = this.level.waveConfig ?? null;
-    const wcfg        = waveConfigs ? (waveConfigs[this.wave - 1] ?? null) : null;
+
+    // Empty array = room explicitly has no enemies — mark cleared immediately, no spawn
+    if (waveConfigs !== null && waveConfigs.length === 0) {
+      this._countdown = 0;
+      return;
+    }
+
+    this.active = true;
+    const wcfg  = waveConfigs ? (waveConfigs[this.wave - 1] ?? null) : null;
 
     // Boss wave: explicit config flag OR hardcoded wave-5 fallback
     const isBossWave = wcfg ? !!wcfg.boss : this.wave === 5;
