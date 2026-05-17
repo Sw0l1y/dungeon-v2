@@ -290,6 +290,10 @@
       <div style="position:absolute;top:8px;right:10px;font-size:10px;color:var(--muted);line-height:1.7;pointer-events:none">
         Click nub → nub to connect &nbsp;·&nbsp; Drag room to move &nbsp;·&nbsp; Right-click nub to remove
       </div>
+      <div style="position:absolute;bottom:12px;right:12px;display:flex;align-items:center;gap:8px;">
+        <span style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Map Version</span>
+        <input type="text" id="map-version-input" class="tb-input accent" value="map-v1.0" style="width:110px;font-size:11px;" />
+      </div>
     </div>
 
     <!-- Canvas -->
@@ -404,11 +408,6 @@
         <p class="hint">Shrinking crops from the right/bottom edge.</p>
       </div>
 
-      <div class="tool-section">
-        <div class="tool-label">Map Version</div>
-        <input type="text" id="map-version-input" class="tb-input accent" value="map-v1.0" />
-        <p class="hint">Auto-increments on sync/download.</p>
-      </div>
     </aside>
   </main>
 </div>
