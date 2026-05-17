@@ -245,30 +245,41 @@ export class GameScene extends Scene {
       };
     }
 
-    // ── Intro portal ──────────────────────────────────────────────────────────
+    // ── Intro portal / door-iris setup ───────────────────────────────────────
     const { map, tileSize: ts } = this.level;
     this._introCX    = Math.floor(map[0].length / 2) * ts + ts / 2;
     this._introCY    = Math.floor(map.length    / 2) * ts + ts / 2;
-    this._introPhase = 'opening';   // 'opening' | 'stable' | 'closing' | 'done'
-    this._introT     = 0;
-    this._introR     = 0;
     this._introAngle = 0;
     this._INTRO_MAX_R    = 58;
     this._INTRO_OPEN_S   = 1.1;
     this._INTRO_STABLE_S = 0.6;
     this._INTRO_CLOSE_S  = 0.9;
-
-    // Snap camera to player spawn (centre) immediately
-    this.camera.snapTo(this._introCX, this._introCY);
-    this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
-
-    // Intro ambient particles (stream toward the opening portal)
     this._introParticles      = [];
-    this._introParticleShrink = 0;  // > 0 = shrinking out after portal closes
-    this._initIntroParticles();
+    this._introParticleShrink = 0;
+    this._irisClose = null;
+    this._irisOpen  = null;
 
-    // Players start invisible (grow in with the portal)
-    for (const pl of this.level.players) pl.spawnScale = 0;
+    const isDoorEntry = !!this.game.state.doorEntry;
+    if (isDoorEntry) {
+      this.game.state.doorEntry = false;
+      this._introPhase = 'done';
+      this._introT     = 0;
+      this._introR     = 0;
+      const spawnX = this.level._spawnX;
+      const spawnY = this.level._spawnY;
+      this.camera.snapTo(spawnX, spawnY);
+      this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
+      for (const pl of this.level.players) pl.spawnScale = 1;
+      this._irisOpen = { t: 0, dur: 0.35 };
+    } else {
+      this._introPhase = 'opening';
+      this._introT     = 0;
+      this._introR     = 0;
+      this.camera.snapTo(this._introCX, this._introCY);
+      this.camera.clamp(this.level.worldWidth, this.level.worldHeight);
+      this._initIntroParticles();
+      for (const pl of this.level.players) pl.spawnScale = 0;
+    }
 
     // Gold + upgrades — persist across rooms; initialize on first entry only
     this.game.state.gold     = this.game.state.gold     ?? 0;
@@ -362,14 +373,24 @@ export class GameScene extends Scene {
 
     game.state.currentRoomId = nextRoomId;
     game.state.entrySlotId   = entrySlotId;
+    game.state.doorEntry     = true;
 
     if (this._net) this._net.send({ t: 'roomDoor', roomId: nextRoomId, entrySlotId });
 
-    if (nextRoom.type === 'shop' || nextRoom.tags?.includes('shop')) {
-      game.scenes.switch(new ShopScene(game));
-    } else {
-      game.scenes.switch(new GameScene(game));
-    }
+    // Iris close: shrink circle onto the player, then switch scene
+    const pl = this.level.players[0];
+    const cx = pl ? Math.round(pl.x - this.camera.x) : Math.round(this.game.canvas.width  / 2);
+    const cy = pl ? Math.round(pl.y - this.camera.y) : Math.round(this.game.canvas.height / 2);
+    this._irisClose = {
+      t: 0, dur: 0.35, cx, cy,
+      cb: () => {
+        if (nextRoom.type === 'shop' || nextRoom.tags?.includes('shop')) {
+          game.scenes.switch(new ShopScene(game));
+        } else {
+          game.scenes.switch(new GameScene(game));
+        }
+      },
+    };
   }
 
   update(dt) {
@@ -396,6 +417,28 @@ export class GameScene extends Scene {
     }
 
     this.game.state.stats.timeElapsed += dt;
+
+    // ── Iris close (door exit) — freeze everything while screen goes black ────
+    if (this._irisClose) {
+      this._irisClose.t += dt;
+      if (this._irisClose.t >= this._irisClose.dur) {
+        const cb = this._irisClose.cb;
+        this._irisClose = null;
+        cb();
+        return;
+      }
+      return;
+    }
+
+    // ── Iris open (door entry) — freeze until circle finishes expanding ───────
+    if (this._irisOpen) {
+      this._irisOpen.t += dt;
+      if (this._irisOpen.t >= this._irisOpen.dur) {
+        this._irisOpen = null;
+        if (this._netRole !== 'client') this.waves.startWave();
+      }
+      return;
+    }
 
     // ── Intro portal sequence (players frozen until portal closes) ────────────
     if (this._introPhase !== 'done') {
@@ -920,6 +963,39 @@ export class GameScene extends Scene {
     }
   }
 
+  // ── Iris transition helpers ─────────────────────────────────────────────────
+
+  _irisMaxR(cx, cy) {
+    const W = this.game.canvas.width, H = this.game.canvas.height;
+    return Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) + 4;
+  }
+
+  _irisCloseRadius() {
+    const { t, dur, cx, cy } = this._irisClose;
+    const p = Math.min(1, t / dur);
+    const ease = p * p * p; // easeInCubic — accelerates into black
+    return (1 - ease) * this._irisMaxR(cx, cy);
+  }
+
+  _irisOpenRadius() {
+    const { t, dur } = this._irisOpen;
+    const cx = this.game.canvas.width / 2, cy = this.game.canvas.height / 2;
+    const p = Math.min(1, t / dur);
+    const ease = 1 - Math.pow(1 - p, 3); // easeOutCubic — decelerates as it opens
+    return ease * this._irisMaxR(cx, cy);
+  }
+
+  _drawIrisOverlay(ctx, cx, cy, openRadius) {
+    const W = this.game.canvas.width, H = this.game.canvas.height;
+    ctx.save();
+    ctx.fillStyle = '#000';
+    ctx.beginPath();
+    ctx.rect(0, 0, W, H);
+    if (openRadius > 0.5) ctx.arc(cx, cy, openRadius, 0, Math.PI * 2, true);
+    ctx.fill('evenodd');
+    ctx.restore();
+  }
+
   // ── Network helpers ─────────────────────────────────────────────────────────
 
   /** Build game-state packet (host → client, 20 hz). */
@@ -1164,6 +1240,7 @@ export class GameScene extends Scene {
         const g = this.game;
         g.state.currentRoomId = data.roomId;
         g.state.entrySlotId   = data.entrySlotId;
+        g.state.doorEntry     = true;
         const dungeon  = g.maps?.campaign?.[g.state.dungeonIndex ?? 0];
         const nextRoom = dungeon?.rooms?.find(r => r.id === data.roomId);
         if (nextRoom?.type === 'shop' || nextRoom?.tags?.includes('shop')) {
@@ -1439,6 +1516,10 @@ export class GameScene extends Scene {
 
     // Disconnect overlay
     if (this._netDisconnected) this._drawDisconnect(ctx);
+
+    // Iris transition (door enter/exit) — drawn last so it covers everything
+    if (this._irisClose) this._drawIrisOverlay(ctx, this._irisClose.cx, this._irisClose.cy, this._irisCloseRadius());
+    else if (this._irisOpen) this._drawIrisOverlay(ctx, this.game.canvas.width / 2, this.game.canvas.height / 2, this._irisOpenRadius());
   }
 
   /**
