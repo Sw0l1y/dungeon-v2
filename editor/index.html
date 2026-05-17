@@ -450,7 +450,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v2.4';
+const EDITOR_VERSION = 'v2.5';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -1263,7 +1263,13 @@ function placeDoorSlot(col, row) {
     doorSlotTiles(room, s).some(([tr, tc]) => tr === row && tc === col)
   );
   if (hitIdx >= 0) {
-    const removedId = room.doorSlots[hitIdx].id;
+    // Restore passage tiles to wall before removing
+    const removing = room.doorSlots[hitIdx];
+    for (const [tr, tc] of doorSlotTiles(room, removing)) {
+      if (tr >= 0 && tr < room.rows && tc >= 0 && tc < room.cols)
+        room.tiles[tr][tc] = 1;
+    }
+    const removedId = removing.id;
     room.doorSlots.splice(hitIdx, 1);
     if (curDungeon()) curDungeon().connections = (curDungeon().connections ?? []).filter(c =>
       !(c.roomA === room.id && c.slotA === removedId) &&
@@ -1282,7 +1288,13 @@ function placeDoorSlot(col, row) {
       row = Math.max(1, Math.min(room.rows - 2, row));
       col = dir === 'E' ? room.cols - 1 : 0;
     }
-    room.doorSlots.push({ id: 'slot-'+Math.random().toString(36).slice(2,8), col, row, dir });
+    const slot = { id: 'slot-'+Math.random().toString(36).slice(2,8), col, row, dir };
+    // Cut the passage into the tile map so it reads clearly
+    for (const [tr, tc] of doorSlotTiles(room, slot)) {
+      if (tr >= 0 && tr < room.rows && tc >= 0 && tc < room.cols)
+        room.tiles[tr][tc] = 0;
+    }
+    room.doorSlots.push(slot);
     showToast('Door slot placed');
   }
   render();
