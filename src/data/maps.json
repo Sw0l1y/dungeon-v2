@@ -1,5 +1,5 @@
 {
-  "mapVersion": "Dungeon testing .2",
+  "mapVersion": "Dungeon testing .3",
   "campaign": [
     {
       "id": "room-7lhsf86",
@@ -824,8 +824,8 @@
             "y": 66
           },
           "room-i854f9i": {
-            "x": 429,
-            "y": 136
+            "x": 346,
+            "y": 48
           }
         }
       }
