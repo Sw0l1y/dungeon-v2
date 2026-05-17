@@ -54,8 +54,14 @@ export class GameScene extends Scene {
 
     // ── Door traversal callbacks — must run after onEnter() populates level.doors
     if (this._dungeon && this.level.doors?.length) {
+      const conns  = this._dungeon.connections ?? [];
+      const curId  = this.game.state.currentRoomId;
       for (const door of this.level.doors) {
         door.onTraverse = (slot) => this._handleDoorTraverse(slot);
+        door._connected = conns.some(c =>
+          (c.roomA === curId && c.slotA === door.slot.id) ||
+          (c.roomB === curId && c.slotB === door.slot.id)
+        );
       }
     }
     this.waves  = new WaveManager(this.level);

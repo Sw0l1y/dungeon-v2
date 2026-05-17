@@ -72,6 +72,29 @@ export class Door {
     const ts = this.level.tileSize;
     const { col, row, dir } = this.slot;
 
+    // Unconnected door: red tile highlight + X
+    if (this._connected === false) {
+      const pulse = 0.55 + 0.3 * Math.sin(Date.now() / 350);
+      ctx.save();
+      ctx.globalAlpha = pulse * 0.55;
+      ctx.fillStyle = '#ff2222';
+      if (dir === 'N' || dir === 'S') {
+        ctx.fillRect((col - 1) * ts, row * ts, 3 * ts, ts);
+      } else {
+        ctx.fillRect(col * ts, (row - 1) * ts, ts, 3 * ts);
+      }
+      ctx.globalAlpha = pulse * 0.9;
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 2.5;
+      ctx.lineCap = 'round';
+      const cx = (col + 0.5) * ts, cy = (row + 0.5) * ts;
+      const s = ts * 0.22;
+      ctx.beginPath(); ctx.moveTo(cx - s, cy - s); ctx.lineTo(cx + s, cy + s); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx + s, cy - s); ctx.lineTo(cx - s, cy + s); ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     if (this._locked) {
       const t     = Date.now() / 1000;
       const pulse = 0.72 + 0.22 * Math.sin(t * 2.8);
