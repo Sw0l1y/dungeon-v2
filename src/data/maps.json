@@ -7,7 +7,7 @@
       "rooms": [
         {
           "id": "room-v0him6l",
-          "name": "Hall",
+          "name": "Horizontal Hall",
           "tags": [],
           "cols": 29,
           "rows": 5,
@@ -24,22 +24,16 @@
           "waves": [],
           "doorSlots": [
             {
-              "id": "slot-o0ryvx",
-              "col": 19,
-              "row": 2,
-              "dir": "E"
-            },
-            {
-              "id": "slot-8bdiqr",
-              "col": 28,
-              "row": 2,
-              "dir": "E"
-            },
-            {
               "id": "slot-o6mt3i",
               "col": 0,
               "row": 2,
               "dir": "W"
+            },
+            {
+              "id": "slot-rkj67m",
+              "col": 28,
+              "row": 2,
+              "dir": "E"
             }
           ],
           "tiles": [
@@ -94,7 +88,7 @@
               0,
               0,
               0,
-              1,
+              0,
               0,
               0,
               0,
@@ -125,7 +119,7 @@
               0,
               0,
               0,
-              1,
+              0,
               0,
               0,
               0,
@@ -156,7 +150,7 @@
               0,
               0,
               0,
-              1,
+              0,
               0,
               0,
               0,
@@ -202,7 +196,7 @@
         },
         {
           "id": "room-i854f9i",
-          "name": "Room 2",
+          "name": "Basic Room 30x17",
           "tags": [],
           "cols": 30,
           "rows": 17,
@@ -810,7 +804,15 @@
           ]
         }
       ],
-      "connections": [],
+      "connections": [
+        {
+          "id": "conn-ghwdt4",
+          "roomA": "room-i854f9i",
+          "slotA": "slot-ed6bak",
+          "roomB": "room-v0him6l",
+          "slotB": "slot-rkj67m"
+        }
+      ],
       "layout": {
         "positions": {
           "room-e7kyw1s": {
@@ -822,8 +824,8 @@
             "y": 66
           },
           "room-i854f9i": {
-            "x": 260,
-            "y": 30
+            "x": 429,
+            "y": 136
           }
         }
       }
