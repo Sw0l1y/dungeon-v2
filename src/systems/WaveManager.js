@@ -32,8 +32,8 @@ export class WaveManager {
     // the hardcoded formula when not present or when this wave index has no entry.
     const waveConfigs = this.level.waveConfig ?? null;
 
-    // Empty array = room explicitly has no enemies — mark cleared immediately, no spawn
-    if (waveConfigs !== null && waveConfigs.length === 0) {
+    // Empty array OR all configured waves exhausted → room is cleared, no more spawns
+    if (waveConfigs !== null && (waveConfigs.length === 0 || this.wave > waveConfigs.length)) {
       this._countdown = 0;
       return;
     }
