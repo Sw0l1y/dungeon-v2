@@ -44,19 +44,20 @@ export class GameScene extends Scene {
     this._roomConfig = roomCfg ?? null;
     this.level = (roomCfg && roomCfg.type !== 'shop') ? new DynamicLevel(this.game, roomCfg) : new Level1(this.game);
 
-    // ── Door traversal callbacks (new-format dungeons only) ───────────────────
     this._doorsLocked      = false;
     this._floorKeySpawned  = false;
-    if (this._dungeon && this.level.doors?.length) {
-      for (const door of this.level.doors) {
-        door.onTraverse = (slot) => this._handleDoorTraverse(slot);
-      }
-    }
 
     // Ensure floor-key state is initialized
     this.game.state.floorKey = this.game.state.floorKey ?? false;
     this.camera = new Camera(this.game.canvas.width, this.game.canvas.height);
     this.level.onEnter();
+
+    // ── Door traversal callbacks — must run after onEnter() populates level.doors
+    if (this._dungeon && this.level.doors?.length) {
+      for (const door of this.level.doors) {
+        door.onTraverse = (slot) => this._handleDoorTraverse(slot);
+      }
+    }
     this.waves  = new WaveManager(this.level);
     this._portalSpawned = false;
 
