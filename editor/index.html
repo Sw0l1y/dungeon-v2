@@ -292,7 +292,7 @@
       </div>
       <div style="position:absolute;bottom:12px;right:12px;display:flex;align-items:center;gap:8px;">
         <span style="font-size:10px;color:var(--muted);font-weight:700;letter-spacing:.06em;text-transform:uppercase;">Map Version</span>
-        <input type="text" id="map-version-input" class="tb-input accent" value="map-v1.0" style="width:110px;font-size:11px;" />
+        <input type="text" id="map-version-input" class="tb-input accent" value="map-v1.0" style="min-width:60px;font-size:11px;" />
       </div>
     </div>
 
@@ -450,7 +450,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v2.3';
+const EDITOR_VERSION = 'v2.4';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -1366,7 +1366,8 @@ document.getElementById('btn-undo').addEventListener('click',undo);
 
 // ── Room name ─────────────────────────────────────────────────────────────
 nameInput.addEventListener('input',()=>{ const room=curRoom(); if(room&&room.type!=='shop'){ room.name=nameInput.value||'Unnamed'; buildTimeline(); } });
-verInput.addEventListener('input',()=>{ state.mapVersion=verInput.value; verDisplay.textContent=state.mapVersion; });
+function sizeVerInput() { if (verInput) verInput.style.width = (verInput.value.length + 3) + 'ch'; }
+verInput.addEventListener('input',()=>{ state.mapVersion=verInput.value; verDisplay.textContent=state.mapVersion; sizeVerInput(); });
 
 // ── Resize ────────────────────────────────────────────────────────────────
 document.getElementById('apply-resize').addEventListener('click',()=>{
@@ -1512,14 +1513,14 @@ function loadJSON(text){
   }
 
   Object.keys(undoStacks).forEach(k => delete undoStacks[k]);
-  verInput.value = state.mapVersion; verDisplay.textContent = state.mapVersion;
+  verInput.value = state.mapVersion; verDisplay.textContent = state.mapVersion; sizeVerInput();
   activeDungeon = 0; activeRoom = 0; openWave = -1; selectRoom(0);
 }
 
 // ── Version bump ──────────────────────────────────────────────────────────
 function bumpVersion(){
   const m=(state.mapVersion??'').match(/^(.*?)(\d+)$/);
-  if(m){ state.mapVersion=m[1]+(parseInt(m[2])+1); verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion; }
+  if(m){ state.mapVersion=m[1]+(parseInt(m[2])+1); verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion; sizeVerInput(); }
 }
 
 // ── Load ──────────────────────────────────────────────────────────────────
@@ -1818,7 +1819,7 @@ window.addEventListener('resize', () => { if (dungeonEditorMode) { resizeDungeon
 // ── Bootstrap ────────────────────────────────────────────────────────────
 (function init(){
   seedLevel1();
-  verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion;
+  verInput.value=state.mapVersion; verDisplay.textContent=state.mapVersion; sizeVerInput();
   updateTileButtons(); updateUndoBtn(); refreshSyncBtn();
 
   // Prefer locally-saved draft; only fall back to server fetch if nothing stored
