@@ -450,7 +450,7 @@
 
 <script>
 // ── Editor version ─────────────────────────────────────────────────────────
-const EDITOR_VERSION = 'v2.5';
+const EDITOR_VERSION = 'v2.6';
 document.getElementById('editor-ver-text').textContent = EDITOR_VERSION;
 
 // ── GitHub config ──────────────────────────────────────────────────────────
@@ -616,7 +616,7 @@ function loadRoomFromLibrary(id) {
     waves:       (room.waves ?? []).map(w => ({...w})),
     tileColors:  {...room.tileColors},
     playerSpawn: {...room.playerSpawn},
-    doorSlots:   (room.doorSlots ?? []).map(s => ({...s})),
+    doorSlots:   (room.doorSlots ?? []).map(s => ({...s, id: 'slot-'+Math.random().toString(36).slice(2,8)})),
     tags:        [...(room.tags ?? [])],
   };
   delete fresh.savedAt;
@@ -1750,10 +1750,12 @@ if (dungeonCanvas) {
         // Complete connection (or cancel if same)
         if (hit.roomId !== dungeonConnStart.roomId || hit.slotId !== dungeonConnStart.slotId) {
           const dg = curDungeon();
-          // Remove existing connections on either slot
+          // Remove existing connections on either room+slot pair (not just slot ID globally)
           dg.connections = (dg.connections ?? []).filter(c =>
-            !(c.slotA === dungeonConnStart.slotId || c.slotB === dungeonConnStart.slotId ||
-              c.slotA === hit.slotId || c.slotB === hit.slotId)
+            !((c.roomA === dungeonConnStart.roomId && c.slotA === dungeonConnStart.slotId) ||
+              (c.roomB === dungeonConnStart.roomId && c.slotB === dungeonConnStart.slotId) ||
+              (c.roomA === hit.roomId && c.slotA === hit.slotId) ||
+              (c.roomB === hit.roomId && c.slotB === hit.slotId))
           );
           dg.connections.push({ id: 'conn-'+Math.random().toString(36).slice(2,8),
             roomA: dungeonConnStart.roomId, slotA: dungeonConnStart.slotId,
